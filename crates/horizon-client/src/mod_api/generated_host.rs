@@ -712,11 +712,11 @@ pub trait Host {
     /// for a player who is off (who joins hidden), until a mod sets it again
     /// or the server stops. Works anywhere on a server, inside a player's
     /// hook too; false on a client and in a world nobody else can join.
-    /// API @API:hide_player@.
+    /// API 314.
     fn hide_player(&mut self, uuid: u128, level: Option<u8>) -> bool;
     /// Draw a stack and its slot decorations, except the count, at `at`,
     /// `size` GUI pixels square. False when nothing was drawn: an unknown item
     /// or an empty stack (air, or a count of 0, as `ItemStack.isEmpty`).
-    /// API @API:item_stack@.
+    /// API 313.
     fn item_stack(&self, batch: &mut HudBatch, stack: &ItemStack, at: [f32; 2], size: f32) -> bool;
 }
