@@ -2359,8 +2359,6 @@ def groups():
         ('summoned fangs lifetime', summoned_fangs_lifetime()),
         ('summoned fangs edits', summoned_fangs_edits()),
         ('summoned fangs levels', summoned_fangs_levels()),
-
-
         ('bird flap sensors', bird_flap_sensors()),
 
         ('loot set damage', loot_set_damage()),
