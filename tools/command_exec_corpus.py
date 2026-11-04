@@ -2466,6 +2466,107 @@ def creeper_custom_fuse():
     return ops + setup('/gamerule mob_griefing true')
 
 
+def bookshelf_item_slots():
+    """Zero-tick bookshelf slots (#9146), with fresh Java 26.3 snapshots.
+
+    A rejected stone write acknowledges the addressed slot without mutation.
+    Command-set books retain count 8; removing an already empty slot keeps
+    the previous last slot. No comparator or restart probe is involved.
+    """
+    out = []
+
+    def check(command, result=1):
+        out.append(cmd(command, expect_result=result))
+
+    def snapshot(last, books, chest):
+        check('/execute if block 22 100 0 chiseled_bookshelf[facing=south]')
+        check('/execute if data block 22 100 0 {id:"minecraft:chiseled_bookshelf"}')
+        check('/execute if data block 24 100 0 {id:"minecraft:chest"}')
+        check('/data get block 22 100 0 Items', len(books))
+        check('/data get block 22 100 0 last_interacted_slot', last)
+        for i in range(6):
+            occupied = str(i in books).lower()
+            check(f'/execute if block 22 100 0 chiseled_bookshelf[slot_{i}_occupied={occupied}]')
+            if i in books:
+                item, count = books[i]
+                check(f'/execute if data block 22 100 0 Items[{{Slot:{i}b,id:"minecraft:{item}",count:{count}}}]')
+                check(f'/execute if items block 22 100 0 container.{i} minecraft:{item}', count)
+            else:
+                check(f'/execute unless data block 22 100 0 Items[{{Slot:{i}b}}]')
+        check('/data get block 24 100 0 Items', len(chest))
+        for i in (0, 6):
+            if i in chest:
+                item, count = chest[i]
+                check(f'/execute if data block 24 100 0 Items[{{Slot:{i}b,id:"minecraft:{item}",count:{count}}}]')
+                check(f'/execute if items block 24 100 0 container.{i} minecraft:{item}', count)
+            else:
+                check(f'/execute unless data block 24 100 0 Items[{{Slot:{i}b}}]')
+
+    def action(command, last, books, chest, result=1):
+        out.extend(setup('/scoreboard players set #r bookshelf_cmd 31',
+                         '/scoreboard players set #s bookshelf_cmd 17'))
+        # Keep the failure callback distinct from a successful numeric zero.
+        out.append(cmd('/execute store result score #r bookshelf_cmd store success score #s '
+                       'bookshelf_cmd run ' + command, expect_result=1 if result else None))
+        check('/scoreboard players get #r bookshelf_cmd', result)
+        check('/scoreboard players get #s bookshelf_cmd', result)
+        snapshot(last, books, chest)
+
+    check('/tick freeze')
+    check('/gamerule spawn_mobs', 0)
+    out.extend(setup('/forceload remove 16 0'))
+    check('/forceload add 16 0')
+    out.append({'op': 'settle'})
+    check('/execute if loaded 22 100 0')
+    for x in (22, 24):
+        for y in (99, 100):
+            # Idempotent world reset; the positive air witness checks it.
+            out.extend(setup(f'/setblock {x} {y} 0 air'))
+            check(f'/execute if block {x} {y} 0 air')
+        check(f'/setblock {x} 99 0 stone')
+    check('/setblock 22 100 0 chiseled_bookshelf[facing=south]')
+    check('/setblock 24 100 0 chest')
+    check('/scoreboard objectives add bookshelf_cmd dummy')
+    out.extend(setup('/execute store result score #before bookshelf_cmd run time query gametime'))
+
+    # Independently measured snapshots, including the acknowledged no-ops.
+    a = {0: ('book', 1)}
+    b = {**a, 4: ('enchanted_book', 1)}
+    c = {**b, 2: ('writable_book', 1)}
+    d = {**a, 2: ('writable_book', 1)}
+    e = {**a, 5: ('book', 8)}
+    f = {**e, 1: ('book', 1)}
+    stone = {6: ('stone', 2)}
+    copied = {0: ('book', 1), **stone}
+    copied8 = {0: ('book', 1), 6: ('book', 8)}
+    snapshot(-1, {}, {})
+    action('item replace block 24 100 0 container.6 with minecraft:stone 2', -1, {}, stone)
+    action('item replace block 22 100 0 container.0 with minecraft:book', 0, a, stone)
+    action('item replace block 22 100 0 container.4 with minecraft:enchanted_book', 4, b, stone)
+    action('item replace block 22 100 0 container.2 with minecraft:writable_book', 2, c, stone)
+    action('item replace block 22 100 0 container.0 with minecraft:stone', 2, c, stone)
+    action('item replace block 24 100 0 container.0 from block 22 100 0 container.0', 2, c, copied)
+    action('item replace block 22 100 0 container.0 with minecraft:book', 0, c, copied)
+    action('item replace block 22 100 0 container.4 with minecraft:air', 4, d, copied)
+    action('item replace block 22 100 0 container.0 with minecraft:book', 0, d, copied)
+    action('item replace block 22 100 0 container.4 with minecraft:air', 0, d, copied)
+    action('item replace block 22 100 0 container.2 from block 24 100 0 container.1', 2, a, copied)
+    action('item replace block 22 100 0 container.5 with minecraft:book 8', 5, e, copied)
+    action('item replace block 24 100 0 container.6 from block 22 100 0 container.5', 5, e, copied8)
+    action('item replace block 22 100 0 container.3 with minecraft:stone', 5, e, copied8)
+    action('item replace block 22 100 0 container.6 with minecraft:book', 5, e, copied8, 0)
+    action('item replace block 22 100 0 container.1 from block 24 100 0 container.0', 1, f, copied8)
+    action('item modify block 22 100 0 container.1 {type:"minecraft:set_count",count:0}', 1, e, copied8)
+    out.extend(setup('/execute store result score #after bookshelf_cmd run time query gametime'))
+    check('/scoreboard players operation #after bookshelf_cmd -= #before bookshelf_cmd', 0)
+    check('/execute if score #after bookshelf_cmd matches 0')
+    out.extend(setup('/setblock 22 100 0 air', '/setblock 24 100 0 air', '/tick unfreeze'))
+    out.append({'op': 'tick', 'n': 25})
+    out.extend(setup('/kill @e[type=item]', '/setblock 22 99 0 air', '/setblock 24 99 0 air',
+                     '/scoreboard objectives remove bookshelf_cmd', '/forceload remove 16 0'))
+    return out
+
+
 def groups():
     return [
         ('setup', group_setup()),
@@ -2508,6 +2609,7 @@ def groups():
         ('levels', levels()),
         ('end portal entities', end_portal_entities()),
         ('items and loot', items_and_loot()),
+        ('bookshelf item slots', bookshelf_item_slots()),
         ('summoned fangs lifetime', summoned_fangs_lifetime()),
         ('summoned fangs edits', summoned_fangs_edits()),
         ('summoned fangs levels', summoned_fangs_levels()),

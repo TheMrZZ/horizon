@@ -270,6 +270,13 @@ impl Game<'_> {
                 .get("minecraft:bookshelf_books")
                 .is_some_and(|m| m.contains(&*s.item))
         });
+        // ChiseledBookShelfBlockEntity.setItem/removeItem: accepted books
+        // always touch the addressed slot; empty writes only do so if occupied.
+        let update_bookshelf = matches!(
+            self.world.block_entities.get(&key),
+            Some(BlockEntity::ChiseledBookshelf(shelf))
+                if stack.is_some() || shelf.items[i].is_some()
+        );
         let recipes = world_recipes!(self);
         match self.world.block_entities.get_mut(&key) {
             Some(BlockEntity::Furnace(f)) if i == 0 => f.set_input(recipes, stack),
@@ -295,6 +302,9 @@ impl Game<'_> {
             }
             Some(entity) => entity.slots_mut()[i] = stack,
             None => return false,
+        }
+        if update_bookshelf {
+            self.chiseled_bookshelf_update_state(p, i);
         }
         self.container_changed(key);
         true
