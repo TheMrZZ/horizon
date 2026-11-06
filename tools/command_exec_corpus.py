@@ -151,6 +151,63 @@ def named_smoke_predicates():
     return out
 
 
+def mob_water_breathing():
+    """LivingEntity air eligibility through real fluids, effects and world ticks."""
+    import uuid
+    ops = []
+    def check(command, result=1):
+        ops.append(cmd(command, expect_result=result))
+    check('/tick freeze')
+    check('/gamerule minecraft:spawn_mobs false', 0)
+    check('/forceload add 0 0 31 31', 4)
+    ops.append({'op': 'settle'})
+    for x in [0, 16]:
+        for z in [0, 16]:
+            check(f'/execute if loaded {x} 200 {z}')
+    check('/fill 0 199 0 31 199 15 stone', 512)
+    # Positive clear admission independent of the generated terrain.
+    check('/fill 0 200 0 31 203 15 barrier', 2048)
+    check('/fill 0 200 0 31 203 15 air', 2048)
+    check('/scoreboard objectives add breath_cmd dummy')
+    cases = [('water_effect', 2, True, 'water_breathing', 100),
+             ('water_plain', 6, True, None, 100),
+             ('dry', 10, False, None, 100),
+             ('water_cap', 14, True, 'water_breathing', 298),
+             ('water_speed', 18, True, 'speed', 100)]
+    for i, (name, x, wet, effect, air) in enumerate(cases, 1):
+        target = str(uuid.UUID(int=(224 << 96) + i))
+        if wet:
+            check(f'/fill {x-1} 200 1 {x+1} 203 3 water', 36)
+        check(f'/execute if block {x} 199 2 stone')
+        check(f'/execute if block {x} 201 2 ' + ('water' if wet else 'air'))
+        check(f'/summon cow {x}.5 200 2.5 {{UUID:[I;224,0,0,{i}],Tags:["breath_{name}"],NoAI:1b,NoGravity:1b,Silent:1b,PersistenceRequired:1b,Air:{air}s}}')
+        if effect:
+            check(f'/effect give {target} minecraft:{effect} 50 1 true')
+    ops.extend(setup('/execute store result score #start breath_cmd run time query gametime'))
+    previous = 0
+    for elapsed in [0, 1, 2, 10]:
+        if elapsed > previous:
+            check(f'/tick step {elapsed - previous}')
+            ops.append({'op': 'tick', 'n': elapsed - previous})
+        previous = elapsed
+        ops.extend(setup('/execute store result score #elapsed breath_cmd run time query gametime',
+                         '/scoreboard players operation #elapsed breath_cmd -= #start breath_cmd'))
+        check('/scoreboard players get #elapsed breath_cmd', elapsed)
+        for i, (name, x, wet, effect, air) in enumerate(cases, 1):
+            target = str(uuid.UUID(int=(224 << 96) + i))
+            check(f'/execute as {target} if entity @s[type=minecraft:cow,tag=breath_{name},nbt={{UUID:[I;224,0,0,{i}],Health:10f,Pos:[{x}.5d,200d,2.5d],NoAI:1b,NoGravity:1b,Silent:1b,PersistenceRequired:1b}}]')
+            check(f'/execute if block {x} 201 2 ' + ('water' if wet else 'air'))
+            expected = min(300, air + 4 * elapsed) if effect == 'water_breathing' or not wet else air - elapsed
+            check(f'/data get entity {target} Air', expected)
+            check(f'/execute if entity @e[nbt={{UUID:[I;224,0,0,{i}],Air:{expected}s}}]')
+            if effect:
+                check(f'/data get entity {target} active_effects[0].duration', 1000-elapsed)
+                check(f'/execute if entity @e[nbt={{UUID:[I;224,0,0,{i}],active_effects:[{{id:"minecraft:{effect}",amplifier:1b,duration:{1000-elapsed}}}]}}]')
+            else:
+                check(f'/execute unless data entity {target} active_effects[0]')
+    return ops
+
+
 def group_setup():
     return [
         *setup('/gamerule spawn_mobs false', '/gamerule mob_drops false', '/gamerule entity_drops false',
@@ -5672,7 +5729,8 @@ ISOLATED_FRAME_MAPS = frozenset({'frame live map detachment'})
 ISOLATED_PICKUP_SAVE = frozenset({'mob saved pickup loot'})
 ISOLATED_ORB_UUID = frozenset({'orb saved UUID'})
 ISOLATED_STAND_FALL = frozenset({'stand saved fall distance'})
-ISOLATED_GROUPS = ISOLATED_REINFORCEMENTS | ISOLATED_RECIPES | ISOLATED_WOLF_ANGER | ISOLATED_FRAME_MAPS | ISOLATED_PICKUP_SAVE | ISOLATED_ORB_UUID | ISOLATED_STAND_FALL
+ISOLATED_BREATHING = frozenset({'mob water breathing'})
+ISOLATED_GROUPS = ISOLATED_REINFORCEMENTS | ISOLATED_RECIPES | ISOLATED_WOLF_ANGER | ISOLATED_FRAME_MAPS | ISOLATED_PICKUP_SAVE | ISOLATED_ORB_UUID | ISOLATED_STAND_FALL | ISOLATED_BREATHING
 
 
 def groups():
@@ -5711,6 +5769,7 @@ def groups():
         ('stand saved fall distance', stand_saved_fall()),
         ('orb saved UUID', orb_saved_uuid()),
         ('mob saved pickup loot', mob_saved_pickup_loot()),
+        ('mob water breathing', mob_water_breathing()),
         ('transmute result patches', transmute_patches(cmd, setup)),
         ('mob effect predicate view', mob_effect_predicates(cmd, setup)),
         ('frame live map detachment', frame_maps(cmd, setup)),

@@ -1213,7 +1213,9 @@ fn base_tick(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
             // LivingEntity.baseTick's air supply (LivingBreatheEvent): an
             // entity with its eyes in water that can't breathe there loses
             // air, any other gains it.
-            let drowns = m.fluids.eye_in_water && !m.kind.flags.breathes_water;
+            let drowns = m.fluids.eye_in_water
+                && !m.kind.flags.breathes_water
+                && !m.has_effect("minecraft:water_breathing");
             let vanilla = Breath {
                 can_breathe: !drowns,
                 consume: 1,
@@ -4931,7 +4933,7 @@ mod air_tests {
     use super::*;
 
     /// A mob of `kind` in a pool, its eyes under, after `ticks` base ticks.
-    fn air_after(kind: &str, air: i32, ticks: u32) -> Option<i32> {
+    fn air_after(kind: &str, air: i32, ticks: u32, effect: Option<&'static str>) -> Option<i32> {
         let build = |world: &mut crate::world::World,
                      registry: &horizon_world::registry::BlockRegistry| {
             world.chunks.insert(
@@ -4952,6 +4954,9 @@ mod air_tests {
             let kind = std::sync::Arc::new(types.types[kind].clone());
             let mut m = Mob::new(1, kind, Vec3::new(2.5, 3.0, 2.5), 0.0);
             m.air = air;
+            if let Some(effect) = effect {
+                m.add_effect(effect, 1000, 1);
+            }
             let mut events = Vec::new();
             for _ in 0..ticks {
                 base_tick(&mut m, w, &mut events);
@@ -4966,7 +4971,7 @@ mod air_tests {
     /// its 4800, as `LivingEntity.baseTick` takes it, so it must surface.
     #[test]
     fn a_dolphin_holds_its_breath_under_water() {
-        let Some(air) = air_after("minecraft:dolphin", 4800, 10) else {
+        let Some(air) = air_after("minecraft:dolphin", 4800, 10, None) else {
             return;
         };
         assert_eq!(air, 4790);
@@ -4975,10 +4980,29 @@ mod air_tests {
     /// A copper golem is in `#can_breathe_under_water`: its air stays full.
     #[test]
     fn a_copper_golem_breathes_under_water() {
-        let Some(air) = air_after("minecraft:copper_golem", 300, 10) else {
+        let Some(air) = air_after("minecraft:copper_golem", 300, 10, None) else {
             return;
         };
         assert_eq!(air, 300);
+    }
+
+    /// `LivingEntity.baseTick`: water breathing refills air even with submerged eyes.
+    #[test]
+    fn water_breathing_refills_generic_mob_air() {
+        for (air, ticks, effect, expected) in [
+            (100, 1, Some("minecraft:water_breathing"), 104),
+            (100, 2, Some("minecraft:water_breathing"), 108),
+            (100, 10, Some("minecraft:water_breathing"), 140),
+            (298, 10, Some("minecraft:water_breathing"), 300),
+            (100, 10, None, 90),
+            (100, 10, Some("minecraft:speed"), 90),
+        ] {
+            // Some also proves the prepared-data callback actually ran.
+            assert_eq!(
+                air_after("minecraft:cow", air, ticks, effect),
+                Some(expected)
+            );
+        }
     }
 }
 

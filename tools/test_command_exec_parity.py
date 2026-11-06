@@ -180,6 +180,8 @@ def main():
     elif not args.only:
         groups = [(name, ops) for name, ops in groups if name not in corpus_module.ISOLATED_PICKUP_SAVE]
     if not args.only:
+        groups = [(name, ops) for name, ops in groups if name not in corpus_module.ISOLATED_BREATHING]
+    if not args.only:
         groups = [(name, ops) for name, ops in groups if name not in corpus_module.ISOLATED_FRAME_MAPS]
     if not args.only and not args.wolf_anger_clock_diagnostic:
         groups = [(name, ops) for name, ops in groups if name not in corpus_module.ISOLATED_WOLF_ANGER]
@@ -290,7 +292,9 @@ def main():
     if args.pufferfish_contact_fixture:
         from pufferfish_contact_corpus import contact_fixture
         groups = [("pufferfish player contact", contact_fixture(args.pufferfish_body_diagnostic))]
-    if args.only:
+    if args.only == "mob water breathing":
+        groups = [g for g in groups if g[0] == args.only]
+    elif args.only:
         groups = [g for g in groups if args.only in g[0] or g[0] == 'setup']
     if args.slot_codec_diagnostic:
         groups.append(('slot source codec diagnostic', [corpus_module.cmd(
