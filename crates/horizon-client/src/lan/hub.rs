@@ -101,6 +101,8 @@ pub struct BodyFlags {
 
 /// Everything the hub needs from the game for one tick.
 pub struct TickCtx<'a> {
+    /// The active level's generator sea level (`CommonPlayerSpawnInfo`).
+    pub sea_level: i32,
     pub world: &'a mut World,
     pub entities: &'a [EntityState],
     pub next_entity: &'a mut u32,
@@ -1219,7 +1221,7 @@ impl Hub {
     // ---- joining -------------------------------------------------------
 
     /// `CommonPlayerSpawnInfo`, with the player's `portalCooldown`.
-    fn spawn_info(&self, i: usize, portal_cooldown: i32) -> play::SpawnInfo {
+    fn spawn_info(&self, i: usize, portal_cooldown: i32, sea_level: i32) -> play::SpawnInfo {
         let g = &self.guests[i];
         play::SpawnInfo {
             dimension_type: self.dimension_type,
@@ -1238,7 +1240,7 @@ impl Hub {
                     pos: *pos,
                 }),
             portal_cooldown,
-            sea_level: 63,
+            sea_level,
         }
     }
 
@@ -1310,7 +1312,7 @@ impl Hub {
             reduced_debug_info: self.reduced_debug_info,
             show_death_screen: !self.immediate_respawn,
             limited_crafting: self.limited_crafting,
-            spawn: self.spawn_info(i, 0),
+            spawn: self.spawn_info(i, 0, ctx.sea_level),
             // MinecraftServer.usesAuthentication, enforceSecureProfile.
             online_mode: self.lan.shared.config.online.is_some(),
             enforces_secure_chat: self.enforces_secure_chat(),
@@ -4558,7 +4560,7 @@ impl Hub {
     /// level loading screen from the Respawn packet until the level info's "level chunks load
     /// start" event and the chunk under the player, so the packets follow vanilla's order.
     pub fn respawn(&mut self, i: usize, at: [f64; 3], ctx: &TickCtx) {
-        let info = self.spawn_info(i, 0);
+        let info = self.spawn_info(i, 0, ctx.sea_level);
         self.close_container_for(i);
         let g = &mut self.guests[i];
         // PlayerList.respawn: into the level in place (the respawn level).
@@ -4691,7 +4693,7 @@ impl Hub {
         portal_cooldown: i32,
         ctx: &TickCtx,
     ) {
-        let info = self.spawn_info(i, portal_cooldown);
+        let info = self.spawn_info(i, portal_cooldown, ctx.sea_level);
         self.close_container_for(i);
         let g = &mut self.guests[i];
         g.dimension = self.config.dimension.clone();
@@ -5095,6 +5097,7 @@ mod tests {
         let mut next_entity = 2;
         let border = crate::worldborder::WorldBorder::default();
         let mut ctx = TickCtx {
+            sea_level: 63,
             world,
             entities: &[],
             next_entity: &mut next_entity,
@@ -5327,6 +5330,7 @@ mod tests {
         let mut next_entity = 100;
         let border = crate::worldborder::WorldBorder::default();
         let mut ctx = TickCtx {
+            sea_level: 63,
             world: &mut world,
             entities: &[],
             next_entity: &mut next_entity,
@@ -5513,6 +5517,7 @@ mod tests {
         let mut next_entity = 2;
         let border = crate::worldborder::WorldBorder::default();
         let mut ctx = TickCtx {
+            sea_level: 63,
             world: &mut world,
             entities: &[],
             next_entity: &mut next_entity,
@@ -5579,6 +5584,7 @@ mod tests {
         let mut next_entity = 2;
         let border = crate::worldborder::WorldBorder::default();
         let mut ctx = TickCtx {
+            sea_level: 63,
             world: &mut world,
             entities: &[],
             next_entity: &mut next_entity,
