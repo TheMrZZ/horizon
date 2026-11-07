@@ -643,7 +643,7 @@ impl Game<'_> {
                         entity,
                         &name,
                         self.world.block_names.get(&key).cloned(),
-                        None,
+                        self.world.block_lock(key),
                     );
                     true
                 } else if let Some(saved) = self.block_entity_nbt(p) {
