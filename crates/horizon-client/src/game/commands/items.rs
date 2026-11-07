@@ -1584,6 +1584,68 @@ mod mob_equipment_command_tests {
         test(&mut game);
     }
 
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+    fn item_command_removal_reaches_actual_chest_model_and_saved_stack() {
+        use super::Slot;
+        use horizon_world::nbt::Tag;
+        with_game(|game| {
+            let helmet = game.items().get("minecraft:iron_helmet").unwrap();
+            assert_eq!(helmet.max_damage, 165);
+            assert_eq!(helmet.max_stack, 1);
+            assert!(game.run_command("setblock 4 200 4 chest"));
+            assert!(game.run_command(
+                "item replace block 4 200 4 container.1 with stone[custom_data={keep:23}] 7"
+            ));
+            let slot = Slot::Block([4, 200, 4], 0);
+            let unrelated = game.slot_get(&Slot::Block([4, 200, 4], 1)).unwrap();
+            for argument in [
+                "iron_helmet",
+                "iron_helmet[max_damage=166,custom_data={audit:17}]",
+            ] {
+                assert!(game.run_command(&format!(
+                    "item replace block 4 200 4 container.0 with {argument}"
+                )));
+                let stack = game.slot_get(&slot).unwrap();
+                assert_eq!(stack.item.as_ref(), "minecraft:iron_helmet");
+                assert_eq!(stack.count, 1);
+                assert!(
+                    stack
+                        .data()
+                        .and_then(|d| d.other("!minecraft:max_damage"))
+                        .is_none()
+                );
+            }
+            for argument in [
+                "iron_helmet[!max_damage,custom_data={audit:17}]",
+                "minecraft:iron_helmet[!minecraft:max_damage,minecraft:custom_data={audit:17}]",
+            ] {
+                assert!(game.run_command(&format!(
+                    "item replace block 4 200 4 container.0 with {argument}"
+                )));
+                let stack = game.slot_get(&slot).unwrap();
+                let empty = Tag::compound([] as [(&str, Tag); 0]);
+                assert_eq!(
+                    stack.data().and_then(|d| d.other("!minecraft:max_damage")),
+                    Some(&empty),
+                    "registered item replacement must retain the modeled removal"
+                );
+                let saved = crate::save::item_to_nbt(&stack);
+                let components = saved.get("components").unwrap();
+                assert_eq!(components.get("!minecraft:max_damage"), Some(&empty));
+                assert_eq!(
+                    components.get("minecraft:custom_data"),
+                    Some(&Tag::compound([("audit", Tag::Int(17))]))
+                );
+                assert!(
+                    !game.run_command("item replace block 4 200 4 container.0 with iron_helmet 2")
+                );
+                assert_eq!(game.slot_get(&slot), Some(stack));
+            }
+            assert_eq!(game.slot_get(&Slot::Block([4, 200, 4], 1)), Some(unrelated));
+        });
+    }
+
     fn actor(game: &mut Game<'_>, kind: &str, n: i32) -> (String, u32) {
         let uuid = format!("00000019-0000-0000-0000-{n:012x}");
         assert!(game.run_command(&format!("summon {kind} 4.5 200 5.5 {{UUID:[I;25,0,0,{n}],NoAI:1b,NoGravity:1b,Silent:1b,h025_raw:7,Tags:[h025]}}")), "{kind}/{n}: {:?}", game.ui.chat.recent_lines(3));

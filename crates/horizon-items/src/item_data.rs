@@ -1164,14 +1164,14 @@ pub fn decode_components(components: Option<&Tag>) -> (u32, Option<Box<StackData
     (damage, (!data.is_empty()).then(|| Box::new(data)))
 }
 
-/// The `[id=value,...]` component list of an item argument (`ItemParser`)
-/// as a `components` compound; `!id` removals are skipped.
+/// `ItemParser.State.readComponents`: materialize additions and removals into
+/// the existing saved component patch representation.
 pub fn command_components(text: &str) -> Result<Tag, String> {
     let inner = text
         .strip_prefix('[')
         .and_then(|t| t.strip_suffix(']'))
         .ok_or("expected '['")?;
-    let mut entries = horizon_world::nbt::Compound::new();
+    let mut operations = Vec::new();
     let mut rest = inner.trim_start();
     while !rest.is_empty() {
         let end = rest.find(['=', ',']).unwrap_or(rest.len());
@@ -1184,17 +1184,99 @@ pub fn command_components(text: &str) -> Result<Tag, String> {
             } else {
                 format!("minecraft:{key}")
             };
-            entries.insert(JavaString::from(id.as_str()), tag);
+            operations.push((id, Some(tag)));
             rest = &value[used..];
+        } else if let Some(id) = key.strip_prefix('!').filter(|id| !id.is_empty()) {
+            let id = if id.contains(':') {
+                id.to_owned()
+            } else {
+                format!("minecraft:{id}")
+            };
+            operations.push((id, None));
         }
         rest = rest.trim_start();
         rest = rest.strip_prefix(',').unwrap_or(rest).trim_start();
     }
+    let patch = horizon_world::component_patch::Patch::new(operations);
+    let entries = patch
+        .entries()
+        .iter()
+        .map(|(id, value)| match value {
+            Some(tag) => (JavaString::from(id.as_str()), tag.clone()),
+            None => (
+                JavaString::from(format!("!{id}").as_str()),
+                Tag::Compound(Default::default()),
+            ),
+        })
+        .collect();
     Ok(Tag::Compound(entries))
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_removals_reach_decoded_and_modelled_saved_stacks() {
+        let empty = Tag::compound([] as [(&str, Tag); 0]);
+        let custom = Tag::compound([("audit", Tag::Int(17))]);
+        for text in [
+            "[!max_damage,custom_data={audit:17}]",
+            "[!minecraft:max_damage,minecraft:custom_data={audit:17}]",
+        ] {
+            let input = command_components(text).unwrap();
+            let (damage, extra) = decode_components(Some(&input));
+            let stack = ItemStack {
+                damage,
+                extra,
+                ..ItemStack::new("minecraft:iron_helmet", 1)
+            };
+            assert_eq!(
+                stack.data().and_then(|d| d.other("!minecraft:max_damage")),
+                Some(&empty),
+                "the real command bridge must adopt the removal into StackData"
+            );
+            let expected = Tag::compound([
+                ("!minecraft:max_damage", empty.clone()),
+                ("minecraft:custom_data", custom.clone()),
+            ]);
+            assert_eq!(encode_components(&stack), Some(expected.clone()));
+            assert_eq!(components_tag(stack.damage, stack.data()), Some(expected));
+            let saved = crate::item_nbt::item_to_nbt(&stack);
+            assert_eq!(saved.get("count"), Some(&Tag::Int(1)));
+            assert_eq!(
+                saved
+                    .get("components")
+                    .unwrap()
+                    .get("!minecraft:max_damage"),
+                Some(&empty)
+            );
+        }
+        // A fresh model has no command/raw source to echo back during saving.
+        let mut fresh = ItemStack::new("minecraft:stone", 1);
+        fresh
+            .data_mut()
+            .set_other("!minecraft:max_stack_size", Some(empty.clone()));
+        fresh
+            .data_mut()
+            .set_other("minecraft:custom_data", Some(custom));
+        let saved = crate::item_nbt::item_to_nbt(&fresh);
+        assert_eq!(
+            saved
+                .get("components")
+                .unwrap()
+                .get("!minecraft:max_stack_size"),
+            Some(&empty)
+        );
+        assert_eq!(
+            command_components("[example:custom={keep:3},damage=7]").unwrap(),
+            Tag::compound([
+                ("example:custom", Tag::compound([("keep", Tag::Int(3))])),
+                ("minecraft:damage", Tag::Int(7)),
+            ])
+        );
+        assert!(command_components("damage=7").is_err());
+        assert!(command_components("[custom_data={]").is_err());
+    }
 
     fn check_lodestone_saved_default(decoded: bool) {
         const TRACKER: &str = "minecraft:lodestone_tracker";
