@@ -234,3 +234,34 @@ fn the_scene_sensor_hears_a_mob_beside_it() {
         "the sensor is indexed: {event:?}"
     );
 }
+
+// Added after the baseline: one entity_action per accepted jump, none for a
+// refused one (the game events posted, as `dispense_fixture` records them).
+
+fn posted_actions(game: &mut Game<'_>, jumps: &[i32]) -> usize {
+    super::dispense_fixture::start_recording();
+    for &data in jumps {
+        jump(game, data);
+    }
+    super::dispense_fixture::stop_recording()
+        .iter()
+        .filter(|line| line.as_str() == "G 8,100,8 minecraft:entity_action")
+        .count()
+}
+
+#[test]
+#[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+fn control_each_accepted_jump_posts_one_entity_action() {
+    let mut game = game();
+    scene(&mut game, true);
+    assert_eq!(posted_actions(&mut game, &[0]), 0, "refused: no power");
+    assert_eq!(posted_actions(&mut game, &[100]), 1, "one accepted jump");
+    assert_eq!(
+        posted_actions(&mut game, &[100, 0, 100]),
+        2,
+        "two accepted, one refused"
+    );
+    let mut game = super::camel_jump_tests::game();
+    scene(&mut game, false);
+    assert_eq!(posted_actions(&mut game, &[100]), 0, "refused: no saddle");
+}
