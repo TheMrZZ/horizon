@@ -1421,3 +1421,7 @@ mod tests {
         assert_eq!(server.stop().unwrap_err().to_string(), "disk write failed");
     }
 }
+
+#[cfg(test)]
+#[path = "inventory_owner_publication_tests.rs"]
+mod inventory_owner_publication_tests;

@@ -215,6 +215,7 @@ impl Game<'_> {
         }
         let d = vanilla::game_dispatcher_with_features(&self.level.enabled_features);
         let parse = d.parse(command, &self.ui.registries);
+        let mut inventory_change = None;
         let result = match parse.executable() {
             Err(e) => {
                 self.syntax_failure(&e, command);
@@ -224,10 +225,13 @@ impl Game<'_> {
                 let ctx = ctx.clone();
                 let root = parse.context.clone();
                 self.exec = Default::default();
-                self.run_chain(&root, &ctx)
+                self.run_chain_with_publication(&root, &ctx, Some(&mut inventory_change))
             }
         };
         let ok = result.is_ok();
+        if !ok {
+            inventory_change = None;
+        }
         if let Err(e) = result {
             if e.input.is_some() {
                 self.syntax_failure(&e, command);
@@ -237,7 +241,7 @@ impl Game<'_> {
         }
         // InventoryChangeTrigger fires as slots change, not on the next tick.
         if self.player.is_some() {
-            self.check_inventory_trigger();
+            self.check_inventory_trigger_with_change(inventory_change);
         }
         ok
     }

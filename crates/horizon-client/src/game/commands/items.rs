@@ -1291,6 +1291,13 @@ impl Game<'_> {
     }
     /// `/item replace|fill|override <target> <slots> (with <item> [count] | from <source> <slots>)`.
     pub(super) fn cmd_item(&mut self, ctx: &Context) -> R<i32> {
+        self.cmd_item_with_publication(ctx, None)
+    }
+    pub(super) fn cmd_item_with_publication(
+        &mut self,
+        ctx: &Context,
+        publication: Option<&mut Option<Option<ItemStack>>>,
+    ) -> R<i32> {
         let mode = ctx
             .literals
             .iter()
@@ -1355,6 +1362,22 @@ impl Game<'_> {
             // A source with nothing in the slot contributes air.
             (found, None)
         };
+        let single_owner = publication.is_some()
+            && mode == "replace"
+            && ctx.has("with")
+            && targets == [Owner::Entity(Target::Player)]
+            && (self.lan_acting.is_none()
+                || matches!((self.lan_acting_uuid, self.serving.as_ref().map(|server| server.owner)),
+                    (Some(acting), Some(owner)) if acting == owner))
+            && self.remote.is_none()
+            && self.player.is_some()
+            && !self.no_player_here()
+            && self
+                .command_source
+                .unwrap_or_else(|| self.player_source())
+                .entity
+                == Some(Target::Player);
+        let mut actual_change = None;
         let mut tracker = Tracker::default();
         let mut selected = 0;
         for o in &targets {
@@ -1403,6 +1426,9 @@ impl Game<'_> {
                 let item = item.filter(|s| &*s.item != "minecraft:air" && s.count > 0);
                 if self.equipment_slot_accepts(slot, item.as_ref()) && self.slot_set(slot, item) {
                     changed += 1;
+                    if single_owner && slots.len() == 1 && matches!(slot, Slot::Inv(_)) {
+                        actual_change = Some(self.slot_get(slot));
+                    }
                 }
             }
             let h = self.owner_holder(o);
@@ -1478,6 +1504,11 @@ impl Game<'_> {
             },
         )?;
         self.feedback(message);
+        if total == 1
+            && let Some(publication) = publication
+        {
+            *publication = actual_change;
+        }
         Ok(total)
     }
     /// `if items` and `if slots`: how many items match / how many slots.

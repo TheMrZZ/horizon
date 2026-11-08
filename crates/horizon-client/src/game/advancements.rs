@@ -1098,6 +1098,13 @@ impl Game<'_> {
     }
     /// `InventoryChangeTrigger`, checked when the inventory changes.
     pub(super) fn check_inventory_trigger(&mut self) {
+        self.check_inventory_trigger_with_change(None);
+    }
+    /// None keeps the legacy path; Some(None) is an explicitly empty changed slot.
+    pub(super) fn check_inventory_trigger_with_change(
+        &mut self,
+        changed: Option<Option<ItemStack>>,
+    ) {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
         for s in self
@@ -1151,6 +1158,7 @@ impl Game<'_> {
         if list.is_empty() {
             return;
         }
+        let changed = changed.map(|stack| stack.as_ref().map(item_view));
         let me = self.player_entity_for("minecraft:inventory_changed");
         self.trigger_criteria(&tree, &list, move |c, w| {
             let slots = &c["slots"];
@@ -1169,8 +1177,19 @@ impl Game<'_> {
                 .as_array()
                 .map(|a| a.iter().collect())
                 .unwrap_or_default();
-            for s in &stacks {
-                wanted.retain(|p| !adv::item(p, s, w));
+            if wanted.len() == 1
+                && let Some(changed) = &changed
+            {
+                if changed
+                    .as_ref()
+                    .is_some_and(|stack| adv::item(wanted[0], stack, w))
+                {
+                    wanted.clear();
+                }
+            } else {
+                for s in &stacks {
+                    wanted.retain(|p| !adv::item(p, s, w));
+                }
             }
             // `InventoryChangeTrigger.TriggerInstance`'s `player`
             // (`ContextAwarePredicate`), tested by `SimpleCriterionTrigger.trigger`.
@@ -3294,5 +3313,273 @@ mod custom_data_equipment_tests {
             failures.is_empty(),
             "actual mob-equipment custom_data mismatch: {failures:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod inventory_changed_stack_dispatch_tests {
+    use super::*;
+    use crate::game::native_machines::tests::server_game;
+    use horizon_client::motion::PlayerMotion;
+    use horizon_core::{geometry::Vec3, position::BlockPos};
+
+    #[test]
+    #[ignore = "needs prepared resources and scratch homes/cwd"]
+    fn actual_player_inventory_mutation_uses_changed_stack_for_single_item_criterion() {
+        let mut game = server_game();
+        game.options.dedicated = None;
+        game.player = Some(PlayerMotion::new(game.motion, Vec3::new(4.5, 200.0, 4.5)).unwrap());
+        game.level.health = 20.0;
+        game.level.player_uuid = Some([411, 0, 0, 1]);
+        game.creative = true;
+        game.world_root = std::env::current_dir()
+            .unwrap()
+            .join("inventory-dispatch-world");
+        let pack = game.world_root.join("datapacks/inventory_dispatch");
+        let dir = pack.join("data/inventory_dispatch/advancement");
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = horizon_core::version::DATA_PACK_FORMAT;
+        std::fs::write(
+            pack.join("pack.mcmeta"),
+            serde_json::json!({"pack":{
+            "description":"Actual inventory changed-stack fixture","pack_format":f.0,
+            "min_format":[f.0,f.1],"max_format":[f.0,f.1]}})
+            .to_string(),
+        )
+        .unwrap();
+        for (name, predicates) in [
+            ("single", serde_json::json!([{"items":"minecraft:diamond"}])),
+            (
+                "multi",
+                serde_json::json!([{"items":"minecraft:diamond"},{"items":"minecraft:dirt"}]),
+            ),
+        ] {
+            std::fs::write(dir.join(format!("{name}.json")), serde_json::json!({"criteria":{
+                "seen":{"trigger":"minecraft:inventory_changed","conditions":{"items":predicates}}
+            }}).to_string()).unwrap();
+        }
+        game.build_registries();
+        game.set_allow_commands(true);
+        assert!(game.run_command("reload"));
+        assert!(game.adv.tree.get("inventory_dispatch:single").is_some());
+        assert!(game.adv.tree.get("inventory_dispatch:multi").is_some());
+        game.block_ticks
+            .add_empty_chunk(BlockPos::new(0, 0, 0).chunk())
+            .unwrap();
+        assert!(game.run_command("forceload add 0 0"));
+        assert!(game.run_command("fill 0 199 0 15 199 15 stone"));
+        assert!(game.world.loaded(4, 4));
+        assert_eq!(
+            &*game.res.facts().get(game.world.block(4, 199, 4)).name,
+            "minecraft:stone"
+        );
+        assert!(game.run_command("execute if entity @s[type=player,name=Player,nbt={UUID:[I;411,0,0,1],Health:20f,playerGameType:1,Pos:[4.5d,200d,4.5d]}]"));
+        assert!(!game.no_player_here());
+        assert_eq!(game.level.player_uuid, Some([411, 0, 0, 1]));
+        let clock = game.world.game_time;
+        assert!(
+            !game.run_command("clear @s"),
+            "empty clear reports no change"
+        );
+        assert!(game.inventory.iter().all(Option::is_none));
+        let done = |g: &Game<'_>, name: &str| {
+            let a = g
+                .adv
+                .tree
+                .get(&format!("inventory_dispatch:{name}"))
+                .expect("actual pack criterion loaded");
+            assert_eq!(a.criteria.len(), 1);
+            assert_eq!(a.criteria[0].name, "seen");
+            g.adv.progress.done(a)
+        };
+        for name in ["single", "multi"] {
+            assert!(game.run_command(&format!(
+                "advancement grant @s only inventory_dispatch:{name} seen"
+            )));
+            assert!(done(&game, name));
+            assert!(game.run_command(&format!(
+                "advancement revoke @s only inventory_dispatch:{name} seen"
+            )));
+            assert!(!done(&game, name));
+        }
+        assert!(game.run_command("item replace entity @s inventory.0 with diamond 1"));
+        assert!(
+            done(&game, "single"),
+            "natural matching-stack trigger reaches actual owner"
+        );
+        assert!(!done(&game, "multi"));
+        assert!(game.run_command("item replace entity @s inventory.1 with dirt 1"));
+        assert!(
+            done(&game, "multi"),
+            "actual multi-item inventory scan positive"
+        );
+        for name in ["single", "multi"] {
+            assert!(game.run_command(&format!(
+                "advancement revoke @s only inventory_dispatch:{name} seen"
+            )));
+            assert!(!done(&game, name));
+        }
+        assert!(game.run_command("item replace entity @s inventory.2 with stone 1"));
+        for (i, item) in [
+            (9, "minecraft:diamond"),
+            (10, "minecraft:dirt"),
+            (11, "minecraft:stone"),
+        ] {
+            let stack = game.inventory[i].as_ref().unwrap();
+            assert_eq!((&*stack.item, stack.count), (item, 1));
+        }
+        let single_unrelated = done(&game, "single");
+        let multi_unrelated = done(&game, "multi");
+        assert!(game.run_command("item replace entity @s inventory.2 with diamond 1"));
+        assert!(
+            done(&game, "single"),
+            "matching changed-stack positive still fires"
+        );
+        assert!(done(&game, "multi"));
+        assert_eq!(game.level.player_uuid, Some([411, 0, 0, 1]));
+        assert_eq!(
+            game.player.as_ref().unwrap().position,
+            Vec3::new(4.5, 200.0, 4.5)
+        );
+        assert_eq!(game.level.health, 20.0);
+        assert_eq!(game.world.game_time, clock);
+        assert_eq!(
+            (single_unrelated, multi_unrelated),
+            (false, true),
+            "unrelated stone change must not regrant retained diamond's single-item criterion; multi still scans inventory"
+        );
+    }
+}
+
+#[cfg(test)]
+mod inventory_publication_postbaseline_controls {
+    use crate::game::native_machines::tests::server_game;
+    use horizon_client::motion::PlayerMotion;
+    use horizon_core::{geometry::Vec3, position::BlockPos};
+    #[test]
+    #[ignore = "needs prepared resources and scratch homes/cwd; added after baseline"]
+    fn single_slot_publication_preserves_callbacks_rewards_empty_errors_and_legacy_function() {
+        let mut game = server_game();
+        game.options.dedicated = None;
+        game.player = Some(PlayerMotion::new(game.motion, Vec3::new(4.5, 200.0, 4.5)).unwrap());
+        game.level.health = 20.0;
+        game.level.player_uuid = Some([411, 0, 0, 1]);
+        game.creative = true;
+        game.world_root = std::env::current_dir()
+            .unwrap()
+            .join("inventory-publication-controls-world");
+        let pack = game.world_root.join("datapacks/inventory_dispatch");
+        let dir = pack.join("data/inventory_dispatch/advancement");
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = horizon_core::version::DATA_PACK_FORMAT;
+        std::fs::write(
+            pack.join("pack.mcmeta"),
+            serde_json::json!({"pack":{
+            "description":"Actual inventory changed-stack fixture","pack_format":f.0,
+            "min_format":[f.0,f.1],"max_format":[f.0,f.1]}})
+            .to_string(),
+        )
+        .unwrap();
+        for (name, predicates) in [
+            ("single", serde_json::json!([{"items":"minecraft:diamond"}])),
+            (
+                "multi",
+                serde_json::json!([{"items":"minecraft:diamond"},{"items":"minecraft:dirt"}]),
+            ),
+        ] {
+            std::fs::write(dir.join(format!("{name}.json")), serde_json::json!({"criteria":{
+                "seen":{"trigger":"minecraft:inventory_changed","conditions":{"items":predicates}}
+            }}).to_string()).unwrap();
+        }
+        let functions = pack.join("data/inventory_dispatch/function");
+        std::fs::create_dir_all(&functions).unwrap();
+        std::fs::write(functions.join("reward.mcfunction"), "scoreboard players add #reward pubcontrol 1\nscoreboard players operation #seen pubcontrol = #result pubcontrol\nitem replace entity @s inventory.3 with dirt 1\n").unwrap();
+        std::fs::write(
+            functions.join("legacy.mcfunction"),
+            "item replace entity @s inventory.2 with stick 1\n",
+        )
+        .unwrap();
+        let single = dir.join("single.json");
+        let mut value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&single).unwrap()).unwrap();
+        value["rewards"] = serde_json::json!({"function":"inventory_dispatch:reward"});
+        std::fs::write(single, value.to_string()).unwrap();
+        game.build_registries();
+        game.set_allow_commands(true);
+        assert!(game.run_command("reload"));
+        assert!(game.adv.tree.get("inventory_dispatch:single").is_some());
+        assert!(game.adv.tree.get("inventory_dispatch:multi").is_some());
+        game.block_ticks
+            .add_empty_chunk(BlockPos::new(0, 0, 0).chunk())
+            .unwrap();
+        assert!(game.run_command("forceload add 0 0"));
+        assert!(game.run_command("fill 0 199 0 15 199 15 stone"));
+        assert!(game.world.loaded(4, 4));
+        assert_eq!(
+            &*game.res.facts().get(game.world.block(4, 199, 4)).name,
+            "minecraft:stone"
+        );
+        assert!(game.run_command("execute if entity @s[type=player,name=Player,nbt={UUID:[I;411,0,0,1],Health:20f,playerGameType:1,Pos:[4.5d,200d,4.5d]}]"));
+        assert!(!game.no_player_here());
+        assert_eq!(game.level.player_uuid, Some([411, 0, 0, 1]));
+        let clock = game.world.game_time;
+        assert!(
+            !game.run_command("clear @s"),
+            "empty clear reports no change"
+        );
+        assert!(game.inventory.iter().all(Option::is_none));
+        assert!(game.run_command("scoreboard objectives add pubcontrol dummy"));
+        assert!(game.run_command("scoreboard players set #reward pubcontrol 0"));
+        assert!(game.run_command("scoreboard players set #result pubcontrol 99"));
+        assert!(game.run_command("execute store result score #result pubcontrol run item replace entity @s inventory.0 with diamond 1"));
+        assert!(game.run_command("execute if score #reward pubcontrol matches 1"));
+        assert!(
+            game.run_command("execute if score #seen pubcontrol matches 1"),
+            "original callback stores precede rewards"
+        );
+        assert_eq!(
+            (
+                &*game.inventory[12].as_ref().unwrap().item,
+                game.inventory[12].as_ref().unwrap().count
+            ),
+            ("minecraft:dirt", 1)
+        );
+        assert!(game.run_command("advancement revoke @s only inventory_dispatch:single seen"));
+        assert!(game.run_command("item replace entity @s inventory.3 with air"));
+        assert!(game.inventory[12].is_none());
+        assert!(
+            game.run_command(
+                "execute unless entity @s[advancements={inventory_dispatch:single={seen=true}}]"
+            ),
+            "explicit empty change is not legacy context"
+        );
+        assert!(!game.run_command("item replace entity @s inventory.999 with diamond"));
+        assert!(game.run_command(
+            "execute unless entity @s[advancements={inventory_dispatch:single={seen=true}}]"
+        ));
+        assert!(game.run_command("item replace entity @s inventory.0 with diamond 1"));
+        assert!(
+            game.run_command(
+                "execute unless entity @s[advancements={inventory_dispatch:single={seen=true}}]"
+            ),
+            "unchanged hash retains prior no-publication policy"
+        );
+        assert!(game.run_command("execute store result score #result pubcontrol run item replace entity @s inventory.0 with diamond 2"));
+        assert!(
+            game.run_command("execute if score #reward pubcontrol matches 2"),
+            "nested reward mutation cannot consume an outer context or duplicate its award"
+        );
+        assert!(game.run_command("execute if score #seen pubcontrol matches 1"));
+        assert!(game.run_command("advancement revoke @s only inventory_dispatch:single seen"));
+        assert!(game.run_command("function inventory_dispatch:legacy"));
+        assert!(
+            game.run_command(
+                "execute if entity @s[advancements={inventory_dispatch:single={seen=true}}]"
+            ),
+            "function mutations deliberately retain the unclosed legacy path"
+        );
+        assert!(game.run_command("execute if score #reward pubcontrol matches 3"));
+        assert_eq!(game.world.game_time, clock);
+        assert_eq!(game.level.player_uuid, Some([411, 0, 0, 1]));
     }
 }

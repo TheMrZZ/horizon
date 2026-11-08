@@ -2,6 +2,7 @@
 //! filtering command sources, then run the final command once per source,
 //! reporting each result to the `store` callbacks of its source.
 use super::{Arg, Context, Dim, Game, R, Target, data::DataRef, err};
+use horizon_client::items::ItemStack;
 use horizon_client::{
     command::{CommandError, vanilla},
     nbt_path::NbtPath,
@@ -243,25 +244,52 @@ impl Game<'_> {
     /// Run a parsed command (`root` is the first context; `ctx` the one with
     /// the executable node): `execute` and `return` walk their own chains.
     pub(in crate::game) fn run_chain(&mut self, root: &Context, ctx: &Context) -> R<i32> {
+        self.run_chain_with_publication(root, ctx, None)
+    }
+    /// A stack-local publication carried only by the outer command's supported path.
+    pub(in crate::game) fn run_chain_with_publication(
+        &mut self,
+        root: &Context,
+        ctx: &Context,
+        publication: Option<&mut Option<Option<ItemStack>>>,
+    ) -> R<i32> {
         self.exec.commands += 1;
         let limit = self.ui.rules.int("max_command_sequence_length").max(1) as u32;
         if self.exec.commands > limit {
             return Err(err("command.failed", &[]));
         }
         match root.literals.first().map(String::as_str) {
-            Some("execute") => self.run_execute(root),
+            Some("execute") => match publication {
+                Some(publication) => self.run_execute_with_publication(root, Some(publication)),
+                None => self.run_execute(root),
+            },
             Some("return") if root.child.is_some() => self.run_return_run(root),
             _ => {
                 let id = ctx.command.unwrap_or("");
-                self.run_leaf(id, ctx)
+                match publication {
+                    Some(publication) => self.run_leaf_with_publication(id, ctx, Some(publication)),
+                    None => self.run_leaf(id, ctx),
+                }
             }
         }
     }
     /// Run a leaf command and report its outcome to the `store` callbacks.
     pub(in crate::game) fn run_leaf(&mut self, id: &str, ctx: &Context) -> R<i32> {
+        self.run_leaf_with_publication(id, ctx, None)
+    }
+    fn run_leaf_with_publication(
+        &mut self,
+        id: &str,
+        ctx: &Context,
+        publication: Option<&mut Option<Option<ItemStack>>>,
+    ) -> R<i32> {
         self.exec.callback = None;
         let store = self.command_source.and_then(|s| s.store);
-        let result = self.execute_command(id, ctx);
+        let result = if id == "item" && publication.is_some() {
+            self.cmd_item_with_publication(ctx, publication)
+        } else {
+            self.execute_command(id, ctx)
+        };
         let custom = self.exec.callback.take();
         let outcome = match (&result, custom) {
             (_, Some(c)) => c,
@@ -325,6 +353,13 @@ impl Game<'_> {
 
     /// ExecuteCommand: `ctx` is the context holding the `execute` literal.
     pub(in crate::game) fn run_execute(&mut self, ctx: &Context) -> R<i32> {
+        self.run_execute_with_publication(ctx, None)
+    }
+    fn run_execute_with_publication(
+        &mut self,
+        ctx: &Context,
+        mut publication: Option<&mut Option<Option<ItemStack>>>,
+    ) -> R<i32> {
         // BuildContexts: a modifier may not bring the sources to this many.
         let fork_limit = self.ui.rules.int("max_command_forks") as usize;
         let mut sources = vec![self.command_source.unwrap_or_else(|| self.player_source())];
@@ -343,6 +378,9 @@ impl Game<'_> {
                 .map(String::as_str)
                 .find(|w| *w != "execute")
                 .unwrap_or("");
+            if !matches!(word, "store" | "run") || (word == "store" && !c.has("score")) {
+                publication = None;
+            }
             match word {
                 "run" => {
                     let Some(command) = c.child.as_deref() else {
@@ -351,6 +389,11 @@ impl Game<'_> {
                     let last = command.last_child();
                     if last.command.is_none() {
                         return Err(err("command.unknown.command", &[]));
+                    }
+                    if sources.len() != 1
+                        || command.literals.first().map(String::as_str) != Some("item")
+                    {
+                        publication = None;
                     }
                     let mut prepared = if function_batch_path
                         && function_as_seen
@@ -373,7 +416,13 @@ impl Game<'_> {
                             self.exec.prepared_function = None;
                             result
                         } else {
-                            self.with_source(s, |g| g.run_chain(command, last))
+                            self.with_source(s, |g| {
+                                g.run_chain_with_publication(
+                                    command,
+                                    last,
+                                    publication.as_deref_mut(),
+                                )
+                            })
                         };
                         match result {
                             Ok(n) => total += n,
