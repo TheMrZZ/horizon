@@ -107,3 +107,52 @@ fn stopping_the_first_jukebox_stops_the_dance_until_the_other_plays_again() {
     step(&mut game, 20);
     assert!(dancing(&game), "B's next jukebox_play starts it again");
 }
+
+// Controls added after the baseline: the source through an in-place load, a
+// NoAI allay, and the out-of-reach check of `aiStep`.
+
+const ALLAY: &str = "00000a11-0000-0000-0000-000000000001";
+
+#[test]
+#[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+fn control_data_merge_keeps_the_dance_and_its_jukebox() {
+    let mut game = game();
+    play(&mut game, 5, "minecraft:music_disc_cat");
+    step(&mut game, 5);
+    play(&mut game, 12, "minecraft:music_disc_cat");
+    step(&mut game, 5);
+    assert!(game.run_command(&format!("data merge entity {ALLAY} {{CustomName:\"x\"}}")));
+    step(&mut game, 1);
+    assert!(dancing(&game), "Entity.load keeps DATA_DANCING");
+    // The kept jukebox is still A: B's stop does not end the dance, A's does.
+    play(&mut game, 12, "minecraft:air");
+    step(&mut game, 1);
+    assert!(dancing(&game));
+    play(&mut game, 5, "minecraft:air");
+    step(&mut game, 1);
+    assert!(!dancing(&game));
+}
+
+#[test]
+#[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+fn control_a_no_ai_allay_never_dances() {
+    let mut game = game();
+    assert!(game.run_command(&format!("data merge entity {ALLAY} {{NoAI:1b}}")));
+    play(&mut game, 5, "minecraft:music_disc_cat");
+    step(&mut game, 25);
+    assert!(!dancing(&game));
+}
+
+#[test]
+#[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+fn control_an_allay_out_of_reach_stops_on_a_twentieth_tick() {
+    let mut game = game();
+    play(&mut game, 5, "minecraft:music_disc_cat");
+    step(&mut game, 2);
+    assert!(dancing(&game));
+    assert!(game.run_command("fill 7 99 7 9 102 9 air"));
+    assert!(game.run_command(&format!("tp {ALLAY} 5.5 112 8.5")));
+    // Farther than 10 blocks from A's centre: stopped by the next tickCount % 20.
+    step(&mut game, 20);
+    assert!(!dancing(&game));
+}

@@ -381,6 +381,16 @@ impl Game<'_> {
                         );
                     // Runtime-only state (AI, animation) carries over.
                     let old = std::mem::replace(slot, new);
+                    // Entity.load keeps the unsaved Allay.jukeboxPos and
+                    // DATA_DANCING of the entity it loads into.
+                    if slot.species() == horizon_client::mobs::Species::Allay {
+                        slot.extra.flag = old.extra.flag;
+                        if let (Some(st), Some(was)) =
+                            (slot.extra.allay.as_mut(), old.extra.allay.as_ref())
+                        {
+                            st.jukebox = was.jukebox;
+                        }
+                    }
                     if keep_liked_player {
                         slot.extra.tame = old.extra.tame;
                         slot.extra.owner = old.extra.owner;
