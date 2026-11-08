@@ -112,6 +112,9 @@ pub struct BiomeInfo {
     /// `BiomeGenerationSettings.features`: the placed feature ids of each
     /// `GenerationStep.Decoration` step, in order.
     pub features: Vec<Vec<String>>,
+    /// The biome's environment attributes (`Biome.getAttributes`): its layer in the
+    /// environment attribute stack.
+    pub attributes: horizon_world::environment_attributes::AttributeMap,
 }
 impl BiomeInfo {
     fn ambient_particles(v: &Value) -> Vec<(ParticleType, f32)> {
@@ -277,6 +280,11 @@ impl BiomeInfo {
                         .collect()
                 })
                 .collect(),
+            attributes: horizon_world::environment_attributes::AttributeMap::parse(attributes)
+                .unwrap_or_else(|e| {
+                    log::warn!("biome attributes: {e}");
+                    Default::default()
+                }),
             name,
         }
     }
@@ -649,6 +657,34 @@ mod pack_tests {
         assert_eq!(next.name(stale), "minecraft:plains");
         assert_eq!(next.name(u16::MAX), "minecraft:plains");
         assert_eq!(next.name(2), "minecraft:river");
+    }
+}
+
+#[cfg(test)]
+impl Biomes {
+    /// Biomes from their files' JSON, by name, in id order: for tests elsewhere.
+    pub(crate) fn from_jsons(entries: &[(&str, Value)]) -> Self {
+        let maps = Colormaps {
+            grass: Vec::new(),
+            foliage: Vec::new(),
+            dry: Vec::new(),
+        };
+        let list: Vec<_> = entries
+            .iter()
+            .map(|(name, v)| BiomeInfo::from_json((*name).to_owned(), v, &maps))
+            .collect();
+        Self {
+            builtin: Arc::new(list.clone()),
+            index: list
+                .iter()
+                .enumerate()
+                .map(|(i, b)| (b.name.clone(), i as u16))
+                .collect(),
+            list,
+            info_noise: SimplexNoise::with_skipped_offsets(&mut LegacyRandom::new(2345), true),
+            colormaps: Arc::new(maps),
+            packs: BTreeMap::new(),
+        }
     }
 }
 

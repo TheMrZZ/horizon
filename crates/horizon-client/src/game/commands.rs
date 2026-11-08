@@ -95,7 +95,7 @@ pub(in crate::game) struct OtherEntity {
     pub position: Vec3,
     pub yaw: f32,
     pub pitch: f32,
-    pub item_transformation: Option<super::native_entities::ItemDisplayTransformation>,
+    pub item_transformation: Option<super::native_entities::DisplayTransformation>,
     /// A `minecraft:interaction`'s saved settings; None for every other kind.
     pub interaction: Option<super::interactions::InteractionState>,
     /// Only explicitly loaded leash knots own this BlockAttachedEntity check counter.
@@ -623,7 +623,7 @@ impl Game<'_> {
                 .projectiles
                 .iter()
                 .find(|p| p.id == id)
-                .map_or_else(String::new, |p| p.kind.id().into()),
+                .map_or_else(String::new, |p| p.entity_type().into()),
             Target::Stand(_) => "minecraft:armor_stand".into(),
             Target::Frame(id) => {
                 if self.item_frames.iter().any(|f| f.id == id && f.glow) {
@@ -703,6 +703,18 @@ impl Game<'_> {
             // FallingBlockEntity.getTypeName: `entity.minecraft.falling_block_type`
             // with the block's name.
             Target::Falling(id) => {
+                let custom = self
+                    .falling
+                    .iter()
+                    .find(|f| f.id == id)
+                    .and_then(|f| f.saved.as_ref())
+                    .and_then(|saved| saved.1.get("CustomName"))
+                    .or_else(|| self.persist_raw(id).and_then(|r| r.get("CustomName")));
+                if let Some(c) = custom {
+                    return horizon_client::scoreboard::comp_text(
+                        &horizon_client::scoreboard::tag_to_json(c),
+                    );
+                }
                 let block = self
                     .falling
                     .iter()
@@ -721,17 +733,9 @@ impl Game<'_> {
             ),
             other => {
                 // Entity.getDisplayName: the CustomName component, else the type.
-                let custom = match other {
-                    Target::Stand(id)
-                    | Target::Frame(id)
-                    | Target::Painting(id)
-                    | Target::Boat(id)
-                    | Target::Cart(id)
-                    | Target::Other(id)
-                    | Target::Fangs(id)
-                    | Target::Cloud(id) => self.persist_raw(id).and_then(|r| r.get("CustomName")),
-                    _ => None,
-                };
+                let custom = super::native_entities::target_id(other)
+                    .and_then(|id| self.persist_raw(id))
+                    .and_then(|r| r.get("CustomName"));
                 if let Some(c) = custom {
                     return horizon_client::scoreboard::comp_text(
                         &horizon_client::scoreboard::tag_to_json(c),
@@ -1375,6 +1379,9 @@ impl Game<'_> {
         let custom = s.data().and_then(|data| data.custom_name.as_ref());
         let hover = if let Some(c) = custom {
             horizon_client::component::name_text(c)
+        } else if let Some(key) = horizon_client::brewing::contents_name_key(s) {
+            // A potion's or tipped arrow's own name, over its `item_name`.
+            Text::translate(&key, &[])
         } else if let Some(name) = s.data().and_then(|d| d.other("minecraft:item_name")) {
             // `ItemStack.getItemName`: the `item_name` component wins over the
             // item's own name (`Item.getName`), so a datapack's or a server's
@@ -1387,18 +1394,6 @@ impl Game<'_> {
             .filter(|t| !t.trim().is_empty())
         {
             Text::literal(title)
-        } else if matches!(
-            item,
-            "minecraft:potion"
-                | "minecraft:splash_potion"
-                | "minecraft:lingering_potion"
-                | "minecraft:tipped_arrow"
-        ) && s.potion().is_some()
-        {
-            Text::translate(
-                &horizon_client::brewing::potion_name_key(item, s.potion()),
-                &[],
-            )
         } else if item == "minecraft:shield"
             && let Some(color) = s.data().and_then(|d| d.base_color.as_deref())
         {
@@ -2436,7 +2431,9 @@ impl Game<'_> {
                 if let Some(i) = self.boats.iter().position(|b| b.id == id) {
                     self.release_vehicle_container(id);
                     let b = self.boats.remove(i);
-                    self.spill_killed_vehicle_contents(b.position, &b.items);
+                    // AbstractChestBoat.remove, after the live menu writes
+                    // back its slots.
+                    self.drop_vehicle_contents(b.position.components(), &b.items);
                     self.boat_removed(&b);
                 }
             }
@@ -2444,7 +2441,8 @@ impl Game<'_> {
                 self.release_vehicle_container(id);
                 if let Some(i) = self.carts.iter().position(|c| c.id == id) {
                     let c = self.carts.remove(i);
-                    self.spill_killed_vehicle_contents(c.position, &c.items);
+                    // AbstractMinecartContainer.remove.
+                    self.drop_vehicle_contents(c.position.components(), &c.items);
                 }
             }
             Target::Other(id) => self.others.retain(|o| o.id != id),
@@ -2465,30 +2463,6 @@ impl Game<'_> {
             self.entity_killed_event(at, false);
         }
         self.native_leaves_flush();
-    }
-    /// `AbstractChestBoat.remove` / `AbstractMinecartContainer.remove` for
-    /// destroying removal (`Entity.kill`): `Containers.dropContents`, separate
-    /// from hurt-time hull drops and after the live menu writes back its slots.
-    fn spill_killed_vehicle_contents(&mut self, pos: Vec3, slots: &[Option<ItemStack>]) {
-        for stack in slots {
-            let count = stack.as_ref().map_or(0, |s| s.count);
-            for piece in horizon_world::level::removal::drop_item_stack_at(
-                &mut self.world.random,
-                pos.components(),
-                count,
-            ) {
-                let Some(stack) = stack else { continue };
-                self.spawn_item(
-                    ItemStack {
-                        count: piece.count,
-                        ..stack.clone()
-                    },
-                    piece.pos,
-                    piece.motion,
-                    0,
-                );
-            }
-        }
     }
     fn cmd_kill(&mut self, ctx: &Context) -> R<i32> {
         let targets = if ctx.get("targets").is_some() {
@@ -2767,6 +2741,7 @@ impl Game<'_> {
             return Ok(false);
         }
         self.ensure_stateful_entity_table();
+        self.sculk_prepare();
         // A different block replaces the block entity (Level.setBlock).
         let (old, new) = (
             self.res.facts().get(previous).name.clone(),
@@ -2810,6 +2785,7 @@ impl Game<'_> {
         let needs_entity = !self.world.block_entities.stateful_entity(landed.0) && old != new;
         if needs_entity
             && self.res.facts().get(landed).name == new
+            && !self.sculk_place_entity(landed)
             && let Some(entity) = self.new_block_entity_for_state(landed)
         {
             self.world.block_entities.insert(key, entity);

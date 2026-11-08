@@ -513,6 +513,9 @@ pub fn base_value(m: &Mob, a: Attr) -> f64 {
 /// [`base_value`] with the type's default given (`default_value`), for a
 /// caller that already looked it up for the mob's type.
 pub fn base_value_with(m: &Mob, a: Attr, default: impl FnOnce() -> Option<f64>) -> f64 {
+    if a == Attr::MovementSpeed && m.species() == Species::Ravager {
+        return m.attrs.speed;
+    }
     m.extra
         .attributes
         .as_ref()
@@ -1154,10 +1157,7 @@ pub fn equip_stack(
             .iter()
             .find(|(id, _)| id == "minecraft:trim")
             .and_then(|(_, v)| {
-                Some((
-                    Arc::from(v["material"].as_str()?),
-                    Arc::from(v["pattern"].as_str()?),
-                ))
+                crate::item_data::trim::from_nbt(&horizon_client_core::scoreboard::json_to_tag(v))
             });
         gear::set_trim(m, gear_slot(slot), trim);
     }
@@ -2725,7 +2725,7 @@ mod tests {
         let mut m = crate::mobs::Mob::new(1, kind, horizon_core::geometry::Vec3::ZERO, 0.0);
         set_item(&mut m, CHEST, "minecraft:iron_chestplate");
         set_slot_enchantments(&mut m, CHEST, vec![(Arc::from("minecraft:thorns"), 3)]);
-        let trim: gear::Trim = (Arc::from("minecraft:gold"), Arc::from("minecraft:coast"));
+        let trim: gear::Trim = ("minecraft:gold".into(), "minecraft:coast".into());
         gear::set_trim(&mut m, gear::CHEST, Some(trim.clone()));
         set_slot_damage(&mut m, CHEST, 2);
         set_slot_damage(&mut m, CHEST, 5);

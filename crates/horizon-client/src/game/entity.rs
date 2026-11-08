@@ -526,6 +526,7 @@ mod render_bounds_tests {
             invisible: false,
             check_interval: 0,
             custom_name: None,
+            random: horizon_core::random::LegacyRandom::new(0),
         };
         let bounds = frame.render_bounds(1.0);
         assert!(bounds.min_position().x <= -0.71875);
@@ -1679,7 +1680,7 @@ impl Entity for Projectile {
         self.previous_pitch = self.pitch;
     }
     fn native_type(&self) -> Cow<'static, str> {
-        self.kind.id().into()
+        self.entity_type().into()
     }
     fn save_nbt(
         game: &mut Game<'_>,
@@ -1704,6 +1705,7 @@ impl Entity for Projectile {
             }
             "minecraft:fireball"
             | "minecraft:small_fireball"
+            | "minecraft:dragon_fireball"
             | "minecraft:wind_charge"
             | "minecraft:breeze_wind_charge"
             | "minecraft:wither_skull" => game.load_fireball(tag, uuid, player_uuid),
@@ -1733,7 +1735,11 @@ impl Entity for Projectile {
             || horizon_client::entity_nbt::saved_with_chunk(self)
             || matches!(
                 self.kind,
-                K::LargeFireball { .. } | K::SmallFireball | K::WindCharge | K::BreezeWindCharge
+                K::LargeFireball { .. }
+                    | K::SmallFireball
+                    | K::DragonFireball
+                    | K::WindCharge
+                    | K::BreezeWindCharge
             );
         selectable.then_some(Target::Projectile(self.id))
     }

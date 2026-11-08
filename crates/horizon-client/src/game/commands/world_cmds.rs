@@ -124,7 +124,7 @@ impl Game<'_> {
 
     // ---- /damage ----------------------------------------------------------------
 
-    fn damage_kind(ty: &str) -> DamageKind {
+    pub(in crate::game) fn damage_kind(ty: &str) -> DamageKind {
         match ty.trim_start_matches("minecraft:") {
             "player_attack" => DamageKind::PlayerAttack,
             "mace_smash" => DamageKind::MaceSmash,
@@ -310,6 +310,7 @@ impl Game<'_> {
             Target::Crystal(id) => {
                 self.command_damage_crystal(id, ty, Self::damage_kind(ty), cause.or(by))
             }
+            Target::Stand(id) => self.command_damage_stand(id, ty, cause.or(by)),
             _ => false,
         }
     }
