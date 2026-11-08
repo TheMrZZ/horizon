@@ -92,10 +92,11 @@ def camel_jump(full=False):
         cmd(f'/ride @p mount {uuid(n)}', f'{name}-mount', admission=False)
         cmd(f'/execute as @p on vehicle if entity @s[type=camel]', f'{name}-riding', admission=False)
         cmd(f'/execute as @p on vehicle if entity {uuid(n)}', f'{name}-riding-it', admission=False)
-        cmd('/data get entity @p RootVehicle.Attach', f'diag-{name}-root-vehicle', admission=False)
+        cmd('/data get entity @p RootVehicle.Attach', f'diag-{name}-root-vehicle', admission=False,
+            diagnostic=True)
         cmd('/data get entity @p Health', f'{name}-player-health', admission=False)
         cmd(f'/data get block {sensor} listener.selector.event.game_event', f'diag-{name}-mount-selected',
-            admission=False)
+            admission=False, diagnostic=True)
         # The pig's damage: the sensor hears this scene.
         cmd(f'/damage 0000ca3e-0000-0000-0000-00010000000{n} 1', f'{name}-pig-damage', 1)
         cmd(f'/data get block {sensor} listener.selector.event.game_event', f'index-{name}-damage-selected',
