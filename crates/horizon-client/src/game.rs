@@ -18731,6 +18731,8 @@ fn write_level_for_role(
 }
 
 #[cfg(test)]
+mod allay_jukebox_source_tests;
+#[cfg(test)]
 mod inline_feature_parse_tests;
 #[cfg(test)]
 mod interaction_data_tests;
