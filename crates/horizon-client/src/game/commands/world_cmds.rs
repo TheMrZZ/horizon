@@ -1837,6 +1837,8 @@ impl Game<'_> {
     pub(super) fn ride_vehicle(&self, t: Target) -> Option<Target> {
         let id = match t {
             Target::Player => self.riding?,
+            Target::Guest(conn) if self.lan_acting == Some(conn) => self.riding?,
+            Target::Guest(conn) => self.command_guest(conn)?.vehicle?,
             Target::Mob(id) => self.mobs.iter().find(|m| m.id == id)?.extra.mount?,
             _ => return None,
         };
@@ -2809,3 +2811,11 @@ mod vehicle_damage_command_tests {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "guest_vehicle_relation_tests.rs"]
+mod guest_vehicle_relation_tests;
+
+#[cfg(test)]
+#[path = "guest_vehicle_lookup_controls.rs"]
+mod guest_vehicle_lookup_controls;
