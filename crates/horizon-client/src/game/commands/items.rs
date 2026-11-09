@@ -2668,14 +2668,4 @@ mod registered_slot_source_preservation_tests {
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::useless_conversion,
-    reason = "retain the frozen V1 qualification source"
-)]
-mod frozen_registered_source_qualification {
-    use super::*;
-    include!("items/registered_source_qualification_tests.rs");
-}
-
-#[cfg(test)]
 include!("items/registered_source_qualification_v2_tests.rs");

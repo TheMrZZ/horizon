@@ -211,14 +211,16 @@ impl Game<'_> {
             self.cmds.vanilla_disabled,
             &self.level.enabled_features,
         );
-        self.fns.packs = stack.packs;
-        self.fns.enabled = stack.enabled;
         let store = self.load_store();
         self.fns.loaded = true;
+        // MinecraftServer.reloadResources selects the packs only once their
+        // data loaded: a rejected candidate keeps the old selection too.
         if let Err(error) = self.slot_source_registries(&store) {
             log::warn!("Slot-source reload rejected: {error}");
             return false;
         }
+        self.fns.packs = stack.packs;
+        self.fns.enabled = stack.enabled;
         self.fns.load_pending = true;
         // An explicit reload (`/reload`, `/datapack`) reloads the content
         // tables with the functions, as `ReloadableServerResources` does;
@@ -1035,6 +1037,7 @@ impl Game<'_> {
     }
     pub(super) fn cmd_datapack(&mut self, id: &str, ctx: &Context) -> R<i32> {
         self.ensure_datapacks();
+        let previous = (self.fns.enabled.clone(), self.cmds.vanilla_disabled);
         if id == "datapack.list" {
             // PackRepository.reload discovers available packs without replacing
             // the loaded registry snapshot or changing the selected pack order.
@@ -1147,7 +1150,7 @@ impl Game<'_> {
                     "commands.datapack.modify.enable",
                     &[self.pack_link(&name, true)],
                 ));
-                self.apply_pack_change();
+                self.apply_pack_change(previous);
                 Ok(self.selected_packs().len() as i32)
             }
             _ => {
@@ -1172,7 +1175,7 @@ impl Game<'_> {
                     "commands.datapack.modify.disable",
                     &[self.pack_link(&name, true)],
                 ));
-                self.apply_pack_change();
+                self.apply_pack_change(previous);
                 Ok(self.selected_packs().len() as i32)
             }
         }
@@ -1180,11 +1183,15 @@ impl Game<'_> {
     /// `ReloadCommand.reloadPacks`: no message of its own. It reloads the
     /// server's data as `/reload` does (`reload_datapacks`), the content
     /// tables with the functions.
-    fn apply_pack_change(&mut self) {
+    /// A rejected candidate keeps the packs selected before the command, as
+    /// `MinecraftServer.reloadResources` selects them only after a load.
+    fn apply_pack_change(&mut self, previous: (Vec<String>, bool)) {
         self.save_datapack_settings();
         let store = self.load_store();
         if let Err(error) = self.slot_source_registries(&store) {
             log::warn!("Slot-source reload rejected: {error}");
+            (self.fns.enabled, self.cmds.vanilla_disabled) = previous;
+            self.save_datapack_settings();
             self.feedback(Text::translate("commands.reload.failure", &[]));
             return;
         }
