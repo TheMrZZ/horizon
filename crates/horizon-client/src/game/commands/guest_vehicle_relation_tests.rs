@@ -1,70 +1,15 @@
 //! Registered server-player context versus a console's execute-on-vehicle source.
+use super::vehicle_damage_command_tests::with_game;
 use super::{Game, Target};
-use crate::game::{Audio, Options, Progress, Settings, load_resources};
-use horizon_client::{
-    chunk::Chunk,
-    lan::{Joined, NetConfig, PlayerSender, guest::Guest, hub::HubConfig},
-};
-use horizon_core::position::ChunkPos;
+use horizon_client::lan::{Joined, NetConfig, PlayerSender, guest::Guest, hub::HubConfig};
 use horizon_protocol::packets::configuration::ClientInformation;
 use std::sync::{Arc, atomic::AtomicI32, mpsc};
-
-fn with_game(test: impl FnOnce(&mut Game<'_>)) {
-    let root = std::path::PathBuf::from(std::env::var_os("HORIZON_TEST_RESOURCES").unwrap());
-    let settings = Settings::default();
-    let loaded = load_resources(
-        root.clone(),
-        None,
-        &root,
-        &settings,
-        std::time::Instant::now(),
-        false,
-        true,
-        &Progress::new(),
-        &mut |_, _| unreachable!(),
-    )
-    .unwrap();
-    let mut options = Options::parse(std::iter::empty()).unwrap().unwrap();
-    options.resources = root.clone();
-    options.game_dir =
-        Some(std::path::PathBuf::from(std::env::var_os("HORIZON_HOME").unwrap()).join("h007-game"));
-    options.execution_role = crate::game::execution_role::ExecutionRole::IntegratedServer;
-    let mut game = Game::new(
-        &loaded.resources,
-        loaded.pack,
-        loaded.gui.unwrap(),
-        options,
-        settings,
-        Audio::silent(&root),
-        None,
-    )
-    .unwrap();
-    game.build_registries();
-    game.set_allow_commands(true);
-    game.world_root = game.options.game_dir.as_ref().unwrap().join("world");
-    std::fs::create_dir_all(&game.world_root).unwrap();
-    game.world
-        .chunks
-        .insert((0, 0), Arc::new(Chunk::empty(0, 0)));
-    game.block_ticks
-        .add_empty_chunk(ChunkPos::new(0, 0))
-        .unwrap();
-    assert!(game.run_command("forceload add 0 0"));
-    assert!(game.run_command("fill 0 99 0 15 99 15 stone"));
-    test(&mut game);
-}
 
 fn query(game: &mut Game<'_>, key: &str, action: &str) -> (i32, i8) {
     use horizon_world::nbt::Tag;
     assert!(
         game.score.storage.get("h007:unit").get(key).is_none(),
         "fresh phase receipt: {key}"
-    );
-    eprintln!(
-        "H007 receipt {key} source={:?} acting={:?} permission={}",
-        game.source_entity(),
-        game.lan_acting,
-        game.ui.registries.permission
     );
     assert!(game.run_command(&format!(
         "data modify storage h007:unit {key} set value {{result:91,success:17b}}"
@@ -85,6 +30,9 @@ fn query(game: &mut Game<'_>, key: &str, action: &str) -> (i32, i8) {
 #[ignore = "needs prepared resources; actual registered Guest and production console command path"]
 fn console_guest_vehicle_relation_uses_the_registered_rider() {
     with_game(|game| {
+        game.world_root = game.options.game_dir.as_ref().unwrap().join("world");
+        std::fs::create_dir_all(&game.world_root).unwrap();
+        assert!(game.run_command("fill 0 99 0 15 99 15 stone"));
         assert!(
             game.player.is_none(),
             "the server source has no local player body"
