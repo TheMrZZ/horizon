@@ -136,3 +136,33 @@ from main. The new `passenger_vehicle_target` graph helper delegates player /
 Guest lookup to it. PR #14716's `remote_removal.rs`, and stand/dispenser owner
 methods, are untouched. The landed #11831 partial and #12458 duplicate policy are preserved
 as history rather than represented as a complete earlier fix.
+
+## PR #14743 physical-position review correction
+
+The original published head `a332f1341f` skipped all mob riders in the saved-tree
+positioning pass. Generic item/display vehicles had no local-server fallback in
+`passenger_riding_position`. A fresh loaded-Game regression on that head plus
+only the new test seam failed: a skeleton on an item remained at Y=200 instead
+of Y=199.55000001192093 (item height 0.25 minus the skeleton's 0.7F attachment).
+The retained pristine executable SHA256 is
+`1696f71013003e4d6175e8d1d79f69644e3247ea819df2e29242f75033ba9260`.
+
+The shared mob seating operation now also runs in ordered saved-tree traversal.
+Generic local vehicles use their current entity bounds or registered dimensions;
+the rider's existing typed attachment is subtracted. Mob-on-mob controlling/body
+rules and specialized boat/cart/TNT/cushion/static seat implementations are
+reused. Specialized vehicles moved by an earlier tree member re-seat their mobs
+through those implementations. Remote-client seating remains on its existing
+route. No native-travel, Guest, remote-removal or duplicate-UUID policy changes
+are part of this correction.
+
+Two new physical regressions cover item, item-display and block-display roots,
+skeleton and baby-zombie offsets, ordered mob/non-mob descendants, movement,
+dismount and subtree removal, plus an item → minecart → skeleton tree. Expected
+coordinates follow retained pinned `Entity.positionRider` / `EntityTypes`
+attachment authority, independently of the native helper. The original
+completion functions are unchanged. Nine completion tests pass on the retained
+fixed executable SHA256
+`9f05e4a2cdc9bfdb5c3e7e23b92c2dd687a10a33823e02b92a5f123d51c95513`.
+The intermediate type-inference compile error is retained separately; it is not
+a gameplay result. No Java admission or old baseline was replayed.

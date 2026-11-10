@@ -172,7 +172,6 @@ impl Game<'_> {
     /// Entity.rideTick: non-mob carriers use the same position writer and
     /// attachment authority as existing riders. Walk parents before children.
     pub(in crate::game) fn position_saved_passengers(&mut self) {
-        use crate::game::entity::{Entity, with_entity};
         let mut riders: Vec<u32> = self
             .persist
             .passenger_slots
@@ -197,7 +196,7 @@ impl Game<'_> {
             }
             path.len()
         });
-        let index = self
+        let index: std::collections::HashMap<u32, usize> = self
             .mobs
             .iter()
             .enumerate()
@@ -208,23 +207,16 @@ impl Game<'_> {
                 self.unlink_passenger(id);
                 continue;
             };
-            if self.mobs.iter().any(|m| m.id == id) {
+            if let Some(&i) = index.get(&id) {
+                // Parents have already moved, including non-mob vehicles of
+                // mobs. Reuse the real mob attachment and specialized seats.
+                self.position_saved_mob_rider(i, &index);
                 continue;
             }
             let Some(target) = self.level_entity(id as i32) else {
                 continue;
             };
-            let seat = self.passenger_riding_position(parent, None, None, &index).or_else(|| {
-                let vehicle = self.level_entity(parent as i32)?;
-                let at = self.target_position(vehicle)?;
-                let mut height = self.registered_entity_dimensions(&self.target_type(vehicle))?[1];
-                for handle in self.entity_handles() {
-                    with_entity!(self, handle, entity => {
-                        if entity.id() == parent { height = (entity.bounds().max_position().y - entity.position().y) as f32; }
-                    });
-                }
-                Some(glam::DVec3::new(at[0], at[1] + f64::from(height), at[2]))
-            });
+            let seat = self.passenger_riding_position(parent, None, None, &index);
             if let Some(at) = seat {
                 self.place_saved_passenger(
                     target,

@@ -470,3 +470,6 @@ fn nosave_riders_transfer_live_without_becoming_saved() {
         }
     });
 }
+
+#[path = "completion_tests/generic_seating_tests.rs"]
+mod generic_seating_tests;
