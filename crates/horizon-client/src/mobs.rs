@@ -1207,6 +1207,8 @@ pub struct Extra {
     /// The body item (`getItemBySlot(BODY)`): a horse's armour, a llama's
     /// carpet, a wolf's armour, a harness, a sulfur cube's swallowed block.
     pub body: Option<Arc<str>>,
+    /// Actual BODY stack, retained separately from the rendering/behaviour id.
+    pub body_stack: Option<crate::items::ItemStack>,
     /// The body a sulfur cube's archetype attribute modifiers came from
     /// (`LivingEntity.lastEquipmentItems` for `BODY`).
     pub adopted_body: Option<Arc<str>>,
@@ -2700,57 +2702,6 @@ impl Mob {
         crate::text::Text::translate(&format!("entity.{}", id.replace(':', ".")), &[])
     }
 
-    /// What the mob holds and wears, by `EquipmentSlot` ordinal: main hand,
-    /// off hand, feet, legs, chest, head, body and saddle
-    /// (`ClientboundSetEquipmentPacket`'s slots).
-    pub fn equipment_stacks(&self) -> [Option<crate::items::ItemStack>; 8] {
-        use crate::items::ItemStack;
-        let e = &self.extra;
-        let wolf = self.species() == Species::Wolf;
-        let slots = [
-            (0usize, &e.main_hand, e.main_hand_stack()),
-            (1, &e.off_hand, None),
-            (2, &e.feet, e.armor[3].as_ref()),
-            (3, &e.legs, e.armor[2].as_ref()),
-            (4, &e.chest, e.armor[1].as_ref()),
-            // The body slot's item is no worn armour: a horse's armour, a
-            // llama's carpet, a harness go out on their own (6).
-            (5usize, &e.head, e.armor[0].as_ref()),
-            (6, &e.body, None),
-        ];
-        let mut out: [Option<ItemStack>; 8] = Default::default();
-        for (slot, item, worn) in slots {
-            let Some(item) = item else {
-                continue;
-            };
-            // The worn armour keeps its stack: a dyed leather piece keeps
-            // its colour.
-            out[slot] = Some(worn.cloned().unwrap_or_else(|| ItemStack {
-                item: item.clone(),
-                count: 1,
-                // A wolf's armor shows its cracks.
-                damage: if slot == 6 && wolf {
-                    e.body_damage.max(0) as u32
-                } else {
-                    0
-                },
-                extra: if slot == 6 && wolf {
-                    e.body_extra.clone()
-                } else {
-                    None
-                },
-            }));
-        }
-        if e.saddled {
-            out[7] = Some(e.saddle_stack.clone().unwrap_or(ItemStack {
-                item: Arc::from("minecraft:saddle"),
-                count: 1,
-                damage: 0,
-                extra: None,
-            }));
-        }
-        out
-    }
     pub fn burning_time(&self) -> f64 {
         let base = finalize::value(self, finalize::Attr::BurningTime);
         let protection: u32 = gear::ARMOR
@@ -4093,7 +4044,7 @@ impl Mob {
         let after = before + damage.ceil() as i32;
         let at = [self.position.x, self.position.y, self.position.z];
         if after >= WOLF_ARMOR_DURABILITY {
-            self.extra.body = None;
+            self.extra.set_body_stack(None);
             self.extra.body_damage = 0;
             self.extra.body_extra = None;
             self.outbox
@@ -6855,3 +6806,5 @@ mod hidden_speed_mob_tick_tests {
         );
     }
 }
+
+mod saved_body_stack;

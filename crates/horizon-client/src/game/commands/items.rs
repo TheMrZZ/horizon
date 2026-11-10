@@ -622,7 +622,7 @@ impl Game<'_> {
                     "feet" => m.extra.armor[3]
                         .clone()
                         .or_else(|| m.extra.feet.as_ref().map(|i| ItemStack::new(i, 1))),
-                    "body" => m.extra.body.as_ref().map(|i| ItemStack::new(i, 1)),
+                    "body" => m.equipment_stacks()[6].clone(),
                     "saddle" => m.saddle_item(),
                     _ => None,
                 };
@@ -665,7 +665,7 @@ impl Game<'_> {
                     "mainhand" => m.extra.set_main_hand_stack(stack),
                     "offhand" => m.extra.off_hand = item,
                     "head" => m.extra.head = item,
-                    "body" => m.extra.body = item,
+                    "body" => m.extra.set_body_stack(stack),
                     "chest" => m.extra.chest = item,
                     "legs" => m.extra.legs = item,
                     "feet" => m.extra.feet = item,

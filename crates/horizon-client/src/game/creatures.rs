@@ -681,7 +681,7 @@ impl Game<'_> {
         match (body, broke) {
             (true, false) => m.extra.body_damage = stack.damage as i32,
             (true, true) => {
-                m.extra.body = None;
+                m.extra.set_body_stack(None);
                 m.extra.body_damage = 0;
             }
             (false, false) => m.extra.armor[0] = Some(stack),
@@ -793,7 +793,7 @@ impl Game<'_> {
                 return;
             };
             if lost >= max {
-                m.extra.body = None;
+                m.extra.set_body_stack(None);
                 m.extra.body_damage = 0;
                 true
             } else {
@@ -6732,7 +6732,7 @@ impl Game<'_> {
                 stack.damage = m.extra.body_damage.max(0) as u32;
                 stack.extra = m.extra.body_extra.take();
                 armor_drop = Some(stack);
-                m.extra.body = None;
+                m.extra.set_body_stack(None);
                 m.extra.body_damage = 0;
                 eat = Some(("item.armor.unequip_wolf", 1.0, 1.0));
                 equip_event = Some(false);

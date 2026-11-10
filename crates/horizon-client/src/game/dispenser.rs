@@ -2168,11 +2168,11 @@ impl Game<'_> {
             }
             let (at, height) = (m.position, f64::from(m.height()));
             // The swallowed block comes out on top (the passenger attachment).
-            if let Some(old) = self.mobs[i].extra.body.take() {
-                self.spawn_at_location(at, height, ItemStack::new(&old, 1));
+            if let Some(old) = self.mobs[i].take_body_stack() {
+                self.spawn_at_location(at, height, old);
             }
             let m = &mut self.mobs[i];
-            m.extra.body = Some(stack.item.clone());
+            m.extra.set_body_stack(Some(stack.clone()));
             m.persistent = true;
             let (at, id) = (m.position, m.id);
             // setItemSlot: a body item without `equippable` posts UNEQUIP.

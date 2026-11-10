@@ -2754,6 +2754,11 @@ pub fn mob_from_nbt_with_random(
     if m.health < 0.0 {
         m.health = 0.0;
     }
+    m.extra.body_stack = tag
+        .get("equipment")
+        .and_then(|e| e.get("body"))
+        .and_then(item_from_nbt)
+        .filter(|s| m.extra.body.as_ref() == Some(&s.item));
     Some(m)
 }
 

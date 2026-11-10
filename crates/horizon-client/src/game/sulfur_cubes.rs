@@ -86,7 +86,7 @@ impl Game<'_> {
     /// Spit the swallowed block out on top (`EntityAttachment.PASSENGER`).
     fn eject_sulfur_block(&mut self, index: usize) {
         let m = &mut self.mobs[index];
-        let Some(item) = m.extra.body.take() else {
+        let Some(item) = m.take_body_stack() else {
             return;
         };
         let at = [
@@ -94,7 +94,7 @@ impl Game<'_> {
             m.position.y + f64::from(m.height()),
             m.position.z,
         ];
-        self.spawn_item(ItemStack::new(&item, 1), at, [0.0, 0.2, 0.0], 10);
+        self.spawn_item(item, at, [0.0, 0.2, 0.0], 10);
     }
     /// `SulfurCube.mobInteract`. Returns whether the click was used.
     pub(super) fn interact_sulfur_cube(&mut self, index: usize, item: &str) -> bool {
@@ -163,7 +163,12 @@ impl Game<'_> {
                 return false;
             }
             self.eject_sulfur_block(index);
-            self.mobs[index].extra.body = Some(item.into());
+            self.mobs[index]
+                .extra
+                .set_body_stack(self.inventory[self.selected].as_ref().map(|s| ItemStack {
+                    count: 1,
+                    ..s.clone()
+                }));
             self.consume_held();
             self.sulfur_sound(index, "entity.sulfur_cube.absorb");
             // Entity.gameEvent(ENTITY_INTERACT): the cube is the source.
@@ -307,7 +312,6 @@ impl Game<'_> {
             if !griefing || !close {
                 continue;
             }
-            let item = e.stack.item.clone();
             let thrown_by_player = e
                 .thrower
                 .is_some_and(|uuid| Some(uuid) == self.level.player_uuid);
@@ -324,7 +328,7 @@ impl Game<'_> {
                 self.remove_dropped(j);
             }
             let m = &mut self.mobs[i];
-            m.extra.body = Some(item);
+            m.extra.set_body_stack(Some(swallowed.clone()));
             m.extra.point = None;
             self.sulfur_sound(i, "entity.sulfur_cube.absorb");
             if thrown_by_player {

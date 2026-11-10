@@ -251,6 +251,9 @@ fn slot_index(slot: &str) -> Option<usize> {
 }
 /// The whole stack the mob kept in `slot` (by name), when it kept one.
 fn stored_slot_stack(m: &Mob, slot: &str) -> Option<crate::items::ItemStack> {
+    if slot == "body" {
+        return m.equipment_stacks()[6].clone();
+    }
     super::finalize::stored_stack(m, slot_index(slot)?)
 }
 /// The drop of what the mob has in `slot`, given its `stack` after the drop
@@ -296,7 +299,7 @@ pub fn clear_slot(m: &mut Mob, slot: &str) {
             gear::FEET
         }
         "body" => {
-            m.extra.body = None;
+            m.extra.set_body_stack(None);
             m.extra.body_damage = 0;
             m.extra.body_extra = None;
             return;

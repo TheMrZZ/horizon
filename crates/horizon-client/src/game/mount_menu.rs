@@ -300,7 +300,7 @@ impl Game<'_> {
             .is_some_and(|b| b.is_some() && m.extra.body.is_none());
         m.set_saddle(saddle);
         if let Some(body) = body {
-            m.extra.body = body.map(|a| a.item);
+            m.extra.set_body_stack(body);
         }
         let mut items = items;
         let keep = m.extra.items.len().max(CHEST_SIZE);
