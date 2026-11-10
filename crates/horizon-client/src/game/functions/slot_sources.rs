@@ -21,6 +21,14 @@ impl Game<'_> {
         for (id, value) in &store.slot_sources {
             let (tag, _) = horizon_world::nbt::parse_snbt(&value.to_string())
                 .map_err(|error| format!("{id}: {error}"))?;
+            // A registry file is SlotSources.DIRECT_CODEC (a typed source or an
+            // inline list), not the holder codec: a bare id string loads nothing.
+            if value.is_string() {
+                return Err(format!(
+                    "{id}: {}",
+                    horizon_client::command::codec::not_map(&tag)
+                ));
+            }
             horizon_client::command::codec::decode("minecraft:slot_source", &tag, &registries)
                 .map_err(|error| format!("{id}: {error}"))?;
             super::super::commands::items::slot_sources::expand(

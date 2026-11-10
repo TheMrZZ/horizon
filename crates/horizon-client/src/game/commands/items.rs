@@ -2603,9 +2603,13 @@ mod registered_slot_source_preservation_tests {
         count(&mut game, 3); // Disk edits do not change the loaded snapshot.
         game.reload_datapacks(true);
         count(&mut game, 2);
-        std::fs::write(file, "{").unwrap();
+        std::fs::write(&file, "{").unwrap();
         assert!(!game.reload_datapacks(true));
         count(&mut game, 2); // Rejected candidate retains the accepted snapshot.
+        // A definition file that is only a holder id is not DIRECT_CODEC.
+        std::fs::write(&file, r#""parity:first_three""#).unwrap();
+        assert!(!game.reload_datapacks(true));
+        count(&mut game, 2);
         assert!(!game.run_command("execute if slots block 0 100 0 first_three"));
         assert_eq!(game.block_entity_nbt([0, 100, 0]).as_ref(), Some(&before));
         assert_eq!(game.world.game_time, clock);
