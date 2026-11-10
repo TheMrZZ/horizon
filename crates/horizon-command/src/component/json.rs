@@ -432,3 +432,6 @@ fn java_uuid_words(s: &str) -> Option<[i32; 4]> {
         low as i32,
     ])
 }
+
+#[cfg(test)]
+mod review_tests;

@@ -89,3 +89,6 @@ fn rich_description_admission_reaches_loaded_game_functions() {
         assert!(mismatches.is_empty(),"Java-rejected metadata exposed real functions and mutated sentinels: {mismatches:?}");
     });
 }
+
+#[path = "rich_metadata_tests/review_tests.rs"]
+mod review_tests;

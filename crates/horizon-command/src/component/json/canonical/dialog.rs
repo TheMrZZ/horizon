@@ -92,7 +92,7 @@ fn action(v: &Value, ctx: &dyn Context) -> Result<Value, Error> {
             let Value::Object(mut event) = click(&Value::Object(event), ctx)? else {
                 unreachable!()
             };
-            event.remove("action");
+            event.shift_remove("action");
             r.out.extend(event);
         }
     }

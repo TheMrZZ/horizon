@@ -3,9 +3,12 @@
 //! serde_json and the command/NBT number parsers elsewhere unchanged.
 use super::Error;
 use serde_json::value::RawValue;
-use std::{borrow::Cow, collections::BTreeMap, fmt};
+use std::{borrow::Cow, fmt};
 
-pub type Map<K, V> = BTreeMap<K, V>;
+// JsonOps iterates Gson object entries in insertion order. In particular,
+// distinct set/removal PatchKeys collapse by component identity in that order.
+// This map belongs only to metadata admission; generic JSON/NBT stays unchanged.
+pub type Map<K, V> = indexmap::IndexMap<K, V>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {

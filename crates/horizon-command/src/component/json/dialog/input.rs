@@ -47,36 +47,41 @@ pub(super) fn validate(value: &Value, context: &dyn Context) -> R {
             all([fields, initial, multiline])
         }
         "minecraft:single_option" => {
-            all([
+            // RecordCodecBuilder evaluates the options even when width
+            // returns a DataResult error. A nested conversion exception must
+            // survive a lenient optional Component around this dialog.
+            let fields = all([
                 optional(map, "width", width),
                 optional(map, "label_visible", boolean),
-            ])?;
-            let options = map.get("options").ok_or(Error::Invalid)?;
-            list(options, true, |v| {
-                if v.is_string() {
-                    return Ok(());
-                }
-                let map = self::map(v)?;
-                all([
-                    field(map, "id", string),
-                    optional(map, "display", |v| component(v, context)),
-                    optional(map, "initial", boolean),
-                ])
-            })?;
-            require(
-                options
-                    .as_array()
-                    .ok_or(Error::Invalid)?
-                    .iter()
-                    .filter(|v| {
-                        v.as_object()
-                            .and_then(|m| present(m, "initial"))
-                            .and_then(Value::as_bool)
-                            == Some(true)
-                    })
-                    .count()
-                    <= 1,
-            )
+            ]);
+            let options = field(map, "options", |options| {
+                let entries = list(options, true, |v| {
+                    if v.is_string() {
+                        return Ok(());
+                    }
+                    let map = self::map(v)?;
+                    all([
+                        field(map, "id", string),
+                        optional(map, "display", |v| component(v, context)),
+                        optional(map, "initial", boolean),
+                    ])
+                });
+                let initial = options.as_array().ok_or(Error::Invalid).and_then(|a| {
+                    require(
+                        a.iter()
+                            .filter(|v| {
+                                v.as_object()
+                                    .and_then(|m| present(m, "initial"))
+                                    .and_then(Value::as_bool)
+                                    == Some(true)
+                            })
+                            .count()
+                            <= 1,
+                    )
+                });
+                all([entries, initial])
+            });
+            all([fields, options])
         }
         "minecraft:number_range" => {
             all([

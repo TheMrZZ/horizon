@@ -25,19 +25,29 @@ pub(super) fn item(
         }
     }
     if let Some(v) = present(m, "components") {
-        let mut patch = Map::new();
+        // Validation above decodes every value, including losing entries.
+        // DispatchedMapCodec retains decoded PatchKey order; DataComponentPatch
+        // then puts by the registered type, replacing earlier set/removal values.
+        // Reference2ObjectArrayMap retains the first type position on overwrite.
+        let mut decoded = Map::new();
         for (name, v) in v.as_object().unwrap() {
             let (removed, name) = name
                 .strip_prefix('!')
                 .map_or((false, name.as_str()), |s| (true, s));
             let name = crate::args::parse_identifier(name).ok_or(Error::Invalid)?;
-            let encoded = if removed {
-                Value::Object(Map::new())
-            } else {
-                payload::encode(&name, v, ctx)?
-            };
-            patch.insert(format!("{}{name}", if removed { "!" } else { "" }), encoded);
+            decoded.insert(name, (removed, v));
         }
+        let patch = decoded
+            .into_iter()
+            .map(|(name, (removed, v))| {
+                let encoded = if removed {
+                    Value::Object(Map::new())
+                } else {
+                    payload::encode(&name, v, ctx)?
+                };
+                Ok((format!("{}{name}", if removed { "!" } else { "" }), encoded))
+            })
+            .collect::<Result<Map<_, _>, Error>>()?;
         if !patch.is_empty() {
             out.insert("components".into(), Value::Object(patch));
         }
@@ -286,7 +296,7 @@ pub(super) fn component(v: &Value, ctx: &dyn Context) -> Result<Value, Error> {
                 );
             }
             if kind == "text" && out.len() == 1 {
-                Ok(out.remove("text").unwrap())
+                Ok(out.shift_remove("text").unwrap())
             } else {
                 Ok(Value::Object(out))
             }
