@@ -114,6 +114,7 @@ impl Game<'_> {
                     || tnts.contains(&v)
                     || cushions.contains(&v)
                     || self.seat(v).is_some()
+                    || self.passenger_present(v)
                     || index
                         .get(&v)
                         .is_some_and(|&j| self.mobs[j].alive() && !self.mobs[j].removed));
@@ -129,6 +130,9 @@ impl Game<'_> {
             m.extra.rider = riding.get(&m.id).copied();
         }
         self.position_riders();
+        if self.remote.is_none() {
+            self.position_saved_passengers();
+        }
     }
     /// `Entity.positionRider` for every mob passenger: in its boat, then on
     /// its mob. A server's client places them itself too, as the server sends
