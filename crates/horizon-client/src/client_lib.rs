@@ -118,6 +118,7 @@ pub mod recipe_book;
 pub mod recipe_book_screen;
 pub mod reconnect;
 pub mod save;
+pub mod saved_stacks;
 pub mod scoreboard_cmd;
 pub mod screen_layout;
 pub mod screen_narrator;
