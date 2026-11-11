@@ -707,7 +707,10 @@ pub(super) fn create_seed(seed: i64) -> i64 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
+    pub(in crate::game) fn captured_box(game: &mut super::Game<'_>) -> horizon_world::nbt::Tag {
+        game.template_from_world([3, 200, 3], [1, 1, 1], false, false)
+    }
     use super::*;
 
     #[test]
