@@ -1400,7 +1400,7 @@ impl Game<'_> {
         if self.boats.iter().any(|b| b.id == root) {
             let uuid = self.uuid_for(root);
             let b = self.boats.iter().find(|b| b.id == root)?;
-            let mut tag = b.to_nbt(uuid, self.persist.raw.get(&root));
+            let mut tag = b.to_nbt_with_items(uuid, self.persist.raw.get(&root), self.items());
             self.put_mob_passengers(&mut tag, root);
             return Some(tag);
         }
@@ -1409,7 +1409,7 @@ impl Game<'_> {
         }
         let uuid = self.uuid_for(root);
         let c = self.carts.iter().find(|c| c.id == root)?;
-        let mut tag = c.to_nbt(uuid, self.persist.raw.get(&root));
+        let mut tag = c.to_nbt_with_items(uuid, self.persist.raw.get(&root), self.items());
         self.put_mob_passengers(&mut tag, root);
         Some(tag)
     }
@@ -1595,12 +1595,13 @@ impl Game<'_> {
         {
             self.uuid_for(attacker);
         }
-        let mut tag = entity_nbt::mob_to_nbt(
+        let mut tag = entity_nbt::mob_to_nbt_with_items(
             &self.mobs[i],
             uuid,
             self.persist.raw.get(&id),
             Some(self.pack.assets.registry),
             |other| self.persist.uuid_of(other),
+            self.items(),
         );
         self.put_last_hurt_by_mob(&self.mobs[i], &mut tag);
         if horizon_client::mobs::camel::is_camel(self.mobs[i].species())
@@ -1845,12 +1846,13 @@ impl Game<'_> {
         for s in &self.ominous_spawners {
             let at = Vec3::new(s.position[0], s.position[1], s.position[2]);
             if keys.contains(&chunk_of(at)) {
-                let tag = entity_nbt::ominous_item_spawner_to_nbt(
+                let tag = entity_nbt::ominous_item_spawner_to_nbt_with_items(
                     &s.item,
                     at,
                     s.spawn_item_after,
                     self.persist.uuids.get(&s.id).copied().unwrap_or(s.uuid),
                     s.raw.as_deref(),
+                    self.items(),
                 );
                 out.entry(chunk_of(at)).or_default().push(tag);
             }
@@ -2278,10 +2280,21 @@ impl Game<'_> {
             .as_ref()
             .and_then(|a| a.last_state)
             .map(|s| self.state_to_nbt(s));
-        let tag = entity_nbt::arrow_to_nbt(p, uuid, owner, in_block, raw.as_ref())
-            .or_else(|| entity_nbt::fireball_to_nbt(p, uuid, owner, raw.as_ref()))
-            .or_else(|| entity_nbt::throwable_to_nbt(p, uuid, owner, raw.as_ref()))
-            .or_else(|| entity_nbt::spit_or_bullet_to_nbt(p, uuid, owner, target, raw.as_ref()))?;
+        let tag = entity_nbt::arrow_to_nbt_with_items(
+            p,
+            uuid,
+            owner,
+            in_block,
+            raw.as_ref(),
+            self.items(),
+        )
+        .or_else(|| {
+            entity_nbt::fireball_to_nbt_with_items(p, uuid, owner, raw.as_ref(), self.items())
+        })
+        .or_else(|| {
+            entity_nbt::throwable_to_nbt_with_items(p, uuid, owner, raw.as_ref(), self.items())
+        })
+        .or_else(|| entity_nbt::spit_or_bullet_to_nbt(p, uuid, owner, target, raw.as_ref()))?;
         // HasBeenShot is modeled for these projectiles. The generic raw
         // overlay also serves entity types whose shot flag is still opaque.
         let shot = tag.get("HasBeenShot").cloned();
@@ -2339,23 +2352,16 @@ impl Game<'_> {
         let (id, at) = (self.rockets[i].id, self.rockets[i].position);
         keys.contains(&chunk_of(at)).then(|| {
             let uuid = self.uuid_for(id);
-            let tag =
-                self.rockets[i].to_nbt(uuid, self.level.player_uuid, self.persist.raw.get(&id));
+            let tag = self.rockets[i].to_nbt_with_items(
+                uuid,
+                self.level.player_uuid,
+                self.persist.raw.get(&id),
+                self.items(),
+            );
             (chunk_of(at), tag)
         })
     }
-    pub(super) fn save_trident(
-        &mut self,
-        i: usize,
-        keys: &HashSet<ChunkKey>,
-    ) -> Option<(ChunkKey, Tag)> {
-        let (id, at) = (self.tridents[i].id, self.tridents[i].position);
-        keys.contains(&chunk_of(at)).then(|| {
-            let (uuid, reg) = (self.uuid_for(id), self.pack.assets.registry);
-            let tag = self.tridents[i].to_nbt(uuid, reg, self.persist.raw.get(&id));
-            (chunk_of(at), tag)
-        })
-    }
+
     pub(super) fn save_tnt(
         &mut self,
         i: usize,
@@ -2365,49 +2371,7 @@ impl Game<'_> {
         keys.contains(&chunk_of(at))
             .then(|| (chunk_of(at), self.tnt_nbt(i)))
     }
-    pub(super) fn save_boat(
-        &mut self,
-        i: usize,
-        keys: &HashSet<ChunkKey>,
-    ) -> Option<(ChunkKey, Tag)> {
-        let b = &self.boats[i];
-        let (id, at) = (b.id, b.position);
-        if !keys.contains(&chunk_of(at)) {
-            return None;
-        }
-        let uuid = self.saved_uuid_or_random(id);
-        let mut tag = b.to_nbt(uuid, self.persist.raw.get(&id));
-        self.put_mob_passengers(&mut tag, id);
-        // AbstractBoat.addAdditionalSaveData: the lead's holder.
-        self.write_boat_leash(&mut tag, i);
-        Some((chunk_of(at), tag))
-    }
-    pub(super) fn save_cart(
-        &mut self,
-        i: usize,
-        keys: &HashSet<ChunkKey>,
-    ) -> Option<(ChunkKey, Tag)> {
-        let (id, at) = (self.carts[i].id, self.carts[i].position);
-        if !keys.contains(&chunk_of(at)) {
-            return None;
-        }
-        let uuid = self.saved_uuid_or_random(id);
-        let mut tag = self.carts[i].to_nbt(uuid, self.persist.raw.get(&id));
-        self.put_mob_passengers(&mut tag, id);
-        Some((chunk_of(at), tag))
-    }
-    pub(super) fn save_armor_stand(
-        &mut self,
-        i: usize,
-        keys: &HashSet<ChunkKey>,
-    ) -> Option<(ChunkKey, Tag)> {
-        let a = &self.armor_stands[i];
-        keys.contains(&chunk_of(a.position)).then(|| {
-            let uuid = self.saved_uuid_or_random(a.id);
-            let tag = entity_nbt::armor_stand_to_nbt(a, uuid, self.persist.raw.get(&a.id));
-            (chunk_of(a.position), tag)
-        })
-    }
+
     /// The UUID kept for `id`, or a new one that is not remembered (what a
     /// saved vehicle or stand gets when it never had one).
     fn saved_uuid_or_random(&self, id: u32) -> [i32; 4] {
@@ -6121,3 +6085,5 @@ mod mob_hurt_cooldown_tests;
 #[cfg(test)]
 #[path = "trader_llama_discard_tests.rs"]
 mod trader_llama_discard_tests;
+
+mod saved_stack_roots;

@@ -247,9 +247,6 @@ impl Boat {
     }
     /// `Entity.saveWithoutId` with `AbstractChestBoat`'s items: the loaded
     /// compound `raw` under the live fields.
-    pub(super) fn to_nbt(&self, uuid: [i32; 4], raw: Option<&Tag>) -> Tag {
-        self.to_nbt_saved(uuid, raw, None)
-    }
     pub(super) fn to_nbt_with_items(
         &self,
         uuid: [i32; 4],

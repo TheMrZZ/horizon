@@ -3,6 +3,7 @@ use super::*;
 
 /// Saving and loading.
 impl Minecart {
+    #[cfg(test)]
     pub fn to_nbt(
         &self,
         uuid: [i32; 4],
