@@ -798,7 +798,7 @@ impl Game<'_> {
             return false;
         };
         let name = self.data_block_name(pos);
-        let before = horizon_client::save::encode_block_entity(key, e, &name);
+        let before = horizon_client::saved_stacks::block_entity_tag(key, e, &name, self.items());
         if let Tag::Compound(c) = &mut tag {
             for k in ["id", "x", "y", "z"] {
                 if let Some(v) = before.get(k) {
@@ -810,7 +810,7 @@ impl Game<'_> {
             return false;
         };
         let rolled = self.take_loot_table(key, &tag, &mut new);
-        let after = horizon_client::save::encode_block_entity(key, &new, &name);
+        let after = horizon_client::saved_stacks::block_entity_tag(key, &new, &name, self.items());
         // The lock is outside the model: a tag that only changes it still
         // changes the block entity.
         let lock_changed = self.world.block_lock(key) != tag.get("lock");
@@ -1034,7 +1034,9 @@ impl Game<'_> {
         let key = (p[0], p[1], p[2]);
         let name = self.data_block_name(p);
         let e = self.world.block_entities.get(&key)?;
-        let mut tag = save::block_entity_data(key, e, &name, self.world.block_lock(key));
+        let mut captured = e.clone();
+        horizon_client::saved_stacks::capture_block_entity(&mut captured, self.items());
+        let mut tag = save::block_entity_data(key, &captured, &name, self.world.block_lock(key));
         if name == "minecraft:hopper" {
             set_key(
                 &mut tag,

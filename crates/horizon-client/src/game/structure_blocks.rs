@@ -6,7 +6,6 @@ use super::{Game, lan::LanHost};
 use horizon_client::{
     containers::BlockEntity,
     gizmos::{Gizmos, InvisibleBlock},
-    save,
     structure_block::{
         self, RenderMode, SCAN_CORNER_BLOCKS_RANGE, StructureBlock, StructureMode, UpdateType,
     },
@@ -208,18 +207,37 @@ impl Game<'_> {
                     if Some(state) == void || Some(state) == air {
                         continue;
                     }
-                    let nbt = self.world.block_entities.get(&at).map(|entity| {
-                        let name = &*self.res.facts().get(state).name;
-                        let Tag::Compound(mut c) = save::encode_block_entity(at, entity, name)
-                        else {
-                            return Compound::new();
-                        };
-                        // `saveWithId`: the id, not the position.
-                        for key in ["x", "y", "z", "keepPacked"] {
-                            c.remove(&key.into());
-                        }
-                        c
-                    });
+                    let nbt = self
+                        .world
+                        .block_entities
+                        .get(&at)
+                        .map(|entity| {
+                            let name = &*self.res.facts().get(state).name;
+                            let Tag::Compound(mut c) =
+                                horizon_client::saved_stacks::block_entity_tag(
+                                    at,
+                                    entity,
+                                    name,
+                                    self.items(),
+                                )
+                            else {
+                                return Compound::new();
+                            };
+                            // `saveWithId`: the id, not the position.
+                            for key in ["x", "y", "z", "keepPacked"] {
+                                c.remove(&key.into());
+                            }
+                            c
+                        })
+                        .or_else(|| {
+                            let Tag::Compound(mut data) = self.pot_data([at.0, at.1, at.2])? else {
+                                return None;
+                            };
+                            for key in ["x", "y", "z", "keepPacked"] {
+                                data.remove(&key.into());
+                            }
+                            Some(data)
+                        });
                     blocks.push(BlockInfo {
                         pos: [x, y, z],
                         state,

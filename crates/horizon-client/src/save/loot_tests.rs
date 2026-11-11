@@ -242,3 +242,62 @@ fn eager_save_edits_reach_disk_during_ticks_and_again_after_cooldown() {
     drop(save);
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn captured_stack_patch_replaces_loaded_items_without_losing_unknown_block_fields() {
+    use crate::items::Items;
+    use horizon_world::loot::PackOverlay;
+    let root = std::env::temp_dir().join(format!("h088-merge-{}", std::process::id()));
+    fs::create_dir_all(root.join("data/minecraft/loot_table")).unwrap();
+    fs::write(
+        root.join("items.json"),
+        r#"{"minecraft:stone":{"minecraft:max_stack_size":64}}"#,
+    )
+    .unwrap();
+    let items = Items::catalog(&root, &PackOverlay::NONE).unwrap();
+    let original=horizon_world::nbt::parse_snbt(r#"{id:"minecraft:chest",x:1,y:200,z:2,keep:887,Items:[{Slot:5b,id:"minecraft:stone",count:2,components:{"minecraft:max_stack_size":64,"minecraft:custom_data":{keep:888}}}]}"#).unwrap().0;
+    let (pos, loaded) = decode_block_entity(&original).unwrap();
+    let loaded_projection = encode_block_entity(pos, &loaded, "minecraft:chest");
+    let mut current = loaded.clone();
+    crate::saved_stacks::capture_block_entity(&mut current, &items);
+    let current_projection = encode_block_entity(pos, &current, "minecraft:chest");
+    let merged = merge_block_entity(&original, &loaded_projection, &current_projection);
+    assert_eq!(merged.get("keep"), Some(&Tag::Int(887)));
+    let Tag::List(stacks) = merged.get("Items").unwrap() else {
+        panic!("Items")
+    };
+    assert_eq!(stacks[0].get("Slot"), Some(&Tag::Byte(5)));
+    assert_eq!(stacks[0].get("count"), Some(&Tag::Int(2)));
+    assert!(
+        stacks[0]
+            .get("components")
+            .unwrap()
+            .get("minecraft:max_stack_size")
+            .is_none()
+    );
+    assert!(
+        stacks[0]
+            .get("components")
+            .unwrap()
+            .get("minecraft:custom_data")
+            .is_some()
+    );
+    let Tag::List(live) = loaded_projection.get("Items").unwrap() else {
+        panic!("loaded Items")
+    };
+    assert_eq!(
+        live[0]
+            .get("components")
+            .unwrap()
+            .get("minecraft:max_stack_size"),
+        Some(&Tag::Int(64)),
+        "loaded projection remains raw for merge comparison"
+    );
+    let (_, reloaded) = decode_block_entity(&merged).unwrap();
+    let projection = encode_block_entity(pos, &reloaded, "minecraft:chest");
+    assert_eq!(
+        merge_block_entity(&merged, &projection, &projection),
+        merged
+    );
+    fs::remove_dir_all(root).unwrap();
+}

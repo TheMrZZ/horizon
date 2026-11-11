@@ -86,7 +86,8 @@ impl Game<'_> {
             .facts()
             .get(self.world.block(key.0, key.1, key.2))
             .name;
-        let mut tag = save::encode_block_entity(key, entity, block);
+        let mut tag =
+            horizon_client::saved_stacks::block_entity_tag(key, entity, block, self.items());
         if let (Some(name), Tag::Compound(map)) = (self.world.block_names.get(&key), &mut tag) {
             map.insert("CustomName".into(), name.clone());
         }

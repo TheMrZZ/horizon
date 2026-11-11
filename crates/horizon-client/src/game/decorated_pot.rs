@@ -75,6 +75,7 @@ impl Game<'_> {
             ])
         });
         tag = horizon_client::block_entity_nbt::canonical(&tag)?;
+        horizon_client::saved_stacks::capture_pot_item(&mut tag, self.items());
         if let Tag::Compound(map) = &mut tag {
             map.remove(&"keepPacked".into());
         }
@@ -94,7 +95,9 @@ impl Game<'_> {
         if let Tag::Compound(map) = &mut tag {
             map.remove(&"keepPacked".into());
         }
-        let changed = tag != before;
+        let mut saved = tag.clone();
+        horizon_client::saved_stacks::capture_pot_item(&mut saved, self.items());
+        let changed = saved != before;
         spill::put_saved_entity(&mut self.world, pos, tag);
         self.mark_block_entity_updated((pos[0], pos[1], pos[2]));
         Some(changed)
@@ -177,7 +180,10 @@ impl Game<'_> {
         };
         let pitch_bend = inserted.count as f32 / self.max_stack(inserted) as f32;
         if let (Tag::Compound(map), Some(item)) = (&mut tag, &pot_item) {
-            map.insert("item".into(), save::item_to_nbt(item));
+            map.insert(
+                "item".into(),
+                horizon_items::item_nbt::item_to_nbt_with_items(item, self.items()),
+            );
         }
         spill::put_saved_entity(&mut self.world, pos, tag);
         // The sherds and item go to the guests (BlockEntityData).
