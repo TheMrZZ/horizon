@@ -27,7 +27,10 @@ pub fn main() -> horizon_client::Result<()> {
             out,
             "\tattrs max_health={:?} movement_speed={:?} attack_damage={:?} follow_range={:?}",
             f64::from(a.max_health),
-            a.speed,
+            horizon_client::mobs::finalize::value(
+                &mob,
+                horizon_client::mobs::finalize::Attr::MovementSpeed
+            ),
             f64::from(a.attack_damage),
             a.follow_range
         );

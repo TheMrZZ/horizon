@@ -1477,7 +1477,11 @@ mod tests {
         ] {
             let t = Arc::new(types.types.remove(kind).unwrap());
             let mut m = Mob::new(1, t, horizon_core::geometry::Vec3::ZERO, 0.0);
-            m.attrs.speed = 0.25;
+            horizon_client::mobs::finalize::set_base(
+                &mut m,
+                horizon_client::mobs::finalize::Attr::MovementSpeed,
+                0.25,
+            );
             m.extra.saddled = true;
             m.extra.counter = 5;
             m.extra.counter2 = 3;

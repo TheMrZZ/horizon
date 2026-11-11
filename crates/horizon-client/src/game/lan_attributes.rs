@@ -62,14 +62,15 @@ impl Game<'_> {
             let Some(info) = item.as_ref().and_then(|i| self.items().get(i)) else {
                 continue;
             };
-            for (attribute, _, amount, op, group) in &info.modifiers {
+            for (attribute, id, amount, op, group) in &info.modifiers {
                 if attribute == "minecraft:knockback_resistance" && slot_in_group(group, slot) {
                     let op = match operation_named(op) {
                         1 => Op::AddMultipliedBase,
                         2 => Op::AddMultipliedTotal,
                         _ => Op::AddValue,
                     };
-                    extra.push((*amount, op));
+                    // The item modifier's own id: Java applies it by id.
+                    extra.push((id.as_str(), *amount, op));
                 }
             }
         }
@@ -193,7 +194,8 @@ impl Game<'_> {
                     instance(out, a, *v).base = *v;
                 }
             }
-            for x in &s.modifiers {
+            // AttributeInstance.getModifiers (modifierById): each active id once.
+            for x in s.active() {
                 if let Some(a) = self.synced_attribute(kind, x.attr.id()) {
                     add_modifier(
                         out,
@@ -231,46 +233,35 @@ impl Game<'_> {
         {
             instance(out, a, m.extra.vector[0]).base = m.extra.vector[0];
         }
-        if let (Some((a, base)), Some((amount, Op::AddMultipliedBase))) =
-            (speed, finalize::transient(m, Attr::MovementSpeed))
-        {
-            add_modifier(
-                out,
-                a,
-                base,
-                AttributeModifier {
-                    id: "minecraft:baby".into(),
-                    amount,
-                    operation: 1,
-                },
-            );
-        }
-        // LivingEntity.setSprinting: SPEED_MODIFIER_SPRINTING (a dashing cat or ocelot).
-        if let (true, Some((a, base))) = (m.extra.sprinting, speed) {
-            add_modifier(
-                out,
-                a,
-                base,
-                AttributeModifier {
-                    id: "minecraft:sprinting".into(),
-                    amount: f64::from(0.3f32),
-                    operation: 2,
-                },
-            );
-        }
+        // The transient rows (minecraft:baby, sprinting, drinking, attacking,
+        // suffocating) and the Speed effect's minecraft:effect.speed are active
+        // rows in the store above: each id is sent once, from there (#13783).
         let base = |name: &str| {
             Attr::ALL
                 .into_iter()
                 .find(|a| name.strip_prefix("minecraft:") == Some(a.name()))
                 .map(|a| finalize::base_value(m, a))
         };
-        // LivingEntity.onEffectAdded: MobEffect.addAttributeModifiers.
+        // LivingEntity.onEffectAdded: MobEffect.addAttributeModifiers, for the
+        // effects whose modifier is still derived from the list. Speed's is a
+        // stored row (sent above, and none for a loaded Speed), and a stored
+        // row with an effect's id holds that id's single slot.
         for &(effect, _, amplifier) in &m.extra.effects {
-            let Some((attribute, id, amount, op)) =
-                effects::effect_modifier(effect.trim_start_matches("minecraft:"))
-            else {
+            let name = effect.trim_start_matches("minecraft:");
+            if name == "speed" {
+                continue;
+            }
+            let Some((attribute, id, amount, op)) = effects::effect_modifier(name) else {
                 continue;
             };
+            let stored = m
+                .extra
+                .attributes
+                .as_deref()
+                .is_some_and(|s| s.active().any(|x| x.id == id && x.attr.id() == attribute));
+            if stored {
+                continue;
+            }
             let Some(a) = self.synced_attribute(kind, attribute) else {
                 continue;
             };

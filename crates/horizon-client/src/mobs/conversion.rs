@@ -76,6 +76,17 @@ pub fn single(from: &Mob, to: &mut Mob, params: Params) {
     {
         super::finalize::health_boost_changed(to);
     }
+    // convertCommon: newMob.addEffect(new MobEffectInstance(e)) for each one,
+    // so a copied Speed gets its modifier (#13783).
+    if let Some(amp) = to
+        .extra
+        .effects
+        .iter()
+        .find(|e| e.0 == "minecraft:speed")
+        .map(|e| e.2)
+    {
+        super::finalize::effect_attributes_changed(to, "minecraft:speed", Some(amp));
+    }
     if from.is_baby() {
         super::finalize::set_baby(to, true);
     }

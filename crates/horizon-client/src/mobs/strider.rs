@@ -37,12 +37,23 @@ pub fn register(m: &mut Mob) {
 pub fn suffocating(m: &Mob) -> bool {
     m.species() == Species::Strider && m.extra.flag
 }
-/// The movement speed attribute with `SUFFOCATING_MODIFIER` while cold.
-pub fn movement_speed(m: &Mob, base: f64) -> f64 {
-    if suffocating(m) {
-        base + base * SUFFOCATING
+/// `Strider.setSuffocating`: the synced flag, then
+/// `addOrUpdateTransientModifier(SUFFOCATING_MODIFIER)` (`minecraft:suffocating`,
+/// -0.34F, ADD_MULTIPLIED_BASE) while cold, else `removeModifier`.
+pub fn set_suffocating(m: &mut Mob, cold: bool) {
+    use super::finalize::{self, Attr, Op};
+    const ID: &str = "minecraft:suffocating";
+    m.extra.flag = cold;
+    if cold {
+        finalize::add_or_update_transient(
+            m,
+            Attr::MovementSpeed,
+            ID,
+            SUFFOCATING,
+            Op::AddMultipliedBase,
+        );
     } else {
-        base
+        finalize::remove_modifier(m, Attr::MovementSpeed, ID);
     }
 }
 /// `Strider.tick` before `super.tick()`: the tempted and retreating sounds,
@@ -73,7 +84,7 @@ pub fn pre_tick(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
         .mount
         .and_then(|id| w.seen(id))
         .is_some_and(|v| v.species == Species::Strider && !v.cold_strider);
-    m.extra.flag = !in_warm && !on_warm_strider;
+    set_suffocating(m, !in_warm && !on_warm_strider);
 }
 /// `Strider.floatStrider`, after the living tick: standing on the surface of
 /// lava, or bobbing up through it.

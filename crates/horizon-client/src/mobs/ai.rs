@@ -623,7 +623,7 @@ fn drop_invalid_player_target(m: &mut Mob, w: &MobWorld) {
             .as_ref()
             .is_some_and(|p| p.creative || p.spectator || w.difficulty.base == 0)
     {
-        m.ai.target = None;
+        m.set_target(None);
         if matches!(m.species(), Species::ZombifiedPiglin | Species::IronGolem) {
             super::neutral_anger::stop(m);
             m.ai.forget_hurt_by(m.ai.last_hurt_by_time);
@@ -1908,7 +1908,7 @@ fn push_entities(m: &mut Mob, w: &MobWorld, events: &mut Vec<MobEvent>) {
             && w.seen(id).is_some_and(super::golem::golem_prey)
             && m.random.next_int_bound(20).unwrap_or(1) == 0
         {
-            m.ai.target = Some(who);
+            m.set_target(Some(who));
         }
         // doPush calls the other living entity's push; sleeping vetoes both impulses.
         let sleeping = match who {
@@ -2308,16 +2308,6 @@ fn never_removed_when_far(s: Species) -> bool {
             | Species::Warden
             | Species::Wither
     )
-}
-/// The movement speed multiplier of the mob's transient `minecraft:baby`
-/// modifier (`Zombie.SPEED_MODIFIER_BABY` +0.5, `Piglin.SPEED_MODIFIER_BABY`
-/// +0.2, both `ADD_MULTIPLIED_BASE`): the same modifier `/attribute` reads, so
-/// one taken away with `modifier remove` no longer speeds the baby up.
-pub fn speed_bonus(m: &Mob) -> f64 {
-    match super::finalize::transient(m, super::finalize::Attr::MovementSpeed) {
-        Some((amount, super::finalize::Op::AddMultipliedBase)) => 1.0 + amount,
-        _ => 1.0,
-    }
 }
 /// The ambient, hurt and death sounds of species that pick them by state
 /// (`getHurtSound` / `getDeathSound` overrides); the type's otherwise.
@@ -2955,7 +2945,7 @@ pub fn forgive_dead_player(m: &mut Mob) {
         Species::Enderman | Species::ZombifiedPiglin => {
             if m.ai.target == Some(Who::Player) {
                 m.ai.forget_hurt_by(m.age as i32);
-                m.ai.target = None;
+                m.set_target(None);
             }
         }
         // The iron golem keeps its anger's target as a wolf does
@@ -3055,6 +3045,15 @@ fn tick_effects(
         .iter()
         .find(|e| e.0 == "minecraft:health_boost")
         .map(|e| e.2);
+    // #13783: the Speed effect's stored modifier follows its instance.
+    let speed_amp = |m: &Mob| {
+        m.extra
+            .effects
+            .iter()
+            .find(|e| e.0 == "minecraft:speed")
+            .map(|e| e.2)
+    };
+    let old_speed_amp = speed_amp(m);
     let mut i = 0;
     while i < m.extra.effects.len() && i < first {
         let (effect, amp) = (m.extra.effects[i].0, m.extra.effects[i].2);
@@ -3158,6 +3157,12 @@ fn tick_effects(
         .map(|e| e.2);
     if old_boost_amp != new_boost_amp {
         super::finalize::health_boost_changed(m);
+    }
+    // onEffectsRemoved (expiry) -> removeAttributeModifiers; a hidden layer's
+    // promotion -> onEffectUpdated(_, true) -> the row for the new amplifier.
+    let new_speed_amp = speed_amp(m);
+    if old_speed_amp != new_speed_amp {
+        super::finalize::effect_attributes_changed(m, "minecraft:speed", new_speed_amp);
     }
     m.extra
         .effect_fallbacks
@@ -5744,7 +5749,11 @@ mod dolphin_noai_air_tests {
             mob.no_ai = no_ai;
             mob.no_gravity = true;
             mob.persistent = true;
-            mob.attrs.speed = 0.0;
+            crate::mobs::finalize::set_base(
+                &mut mob,
+                crate::mobs::finalize::Attr::MovementSpeed,
+                0.0,
+            );
             mob.air = initial;
             let mut random = LegacyRandom::new(0);
             let mut events = Vec::new();
@@ -5816,7 +5825,11 @@ mod nautilus_noai_air_tests {
             mob.no_ai = no_ai;
             mob.no_gravity = true;
             mob.persistent = true;
-            mob.attrs.speed = 0.0;
+            crate::mobs::finalize::set_base(
+                &mut mob,
+                crate::mobs::finalize::Attr::MovementSpeed,
+                0.0,
+            );
             mob.health = 10.0;
             mob.air = initial;
             let mut random = LegacyRandom::new(0);
@@ -6301,24 +6314,27 @@ mod baby_speed_tests {
     /// #11994: movement reads the transient `minecraft:baby` modifier itself:
     /// `Zombie.SPEED_MODIFIER_BABY` +0.5 and `Piglin.SPEED_MODIFIER_BABY` +0.2
     /// (`ADD_MULTIPLIED_BASE`), and none once `/attribute ... modifier remove`
-    /// took it away, until the next `setBaby`.
+    /// took it away, until the next `setBaby`. `calculateValue` with one
+    /// ADD_MULTIPLIED_BASE row is `base + base * amount`.
     #[test]
     fn a_babys_speed_follows_its_baby_modifier() {
+        use finalize::{Attr, BABY_SPEED_ID};
+        let base = 0.23;
+        let speed = |m: &Mob| finalize::value(m, Attr::MovementSpeed);
         let mut zombie = baby(Species::Zombie, "minecraft:zombie");
-        assert_eq!(speed_bonus(&zombie), 1.5);
-        zombie
-            .extra
-            .attributes
-            .get_or_insert_default()
-            .baby_speed_removed = true;
-        assert_eq!(speed_bonus(&zombie), 1.0, "removed with /attribute");
+        finalize::set_base(&mut zombie, Attr::MovementSpeed, base);
+        assert_eq!(speed(&zombie), base + base * 0.5);
+        finalize::remove_modifier(&mut zombie, Attr::MovementSpeed, BABY_SPEED_ID);
+        assert_eq!(speed(&zombie), base, "removed with /attribute");
         finalize::set_baby(&mut zombie, true);
-        assert_eq!(speed_bonus(&zombie), 1.5, "setBaby adds it back");
+        assert_eq!(speed(&zombie), base + base * 0.5, "setBaby adds it back");
         // The piglin's is 0.2F widened to a double, not the zombie's 0.5.
-        let piglin = baby(Species::Piglin, "minecraft:piglin");
-        assert_eq!(speed_bonus(&piglin), 1.0 + f64::from(0.2f32));
+        let mut piglin = baby(Species::Piglin, "minecraft:piglin");
+        finalize::set_base(&mut piglin, Attr::MovementSpeed, base);
+        assert_eq!(speed(&piglin), base + base * f64::from(0.2f32));
         let mut adult = baby(Species::Zombie, "minecraft:zombie");
         finalize::set_baby(&mut adult, false);
-        assert_eq!(speed_bonus(&adult), 1.0);
+        finalize::set_base(&mut adult, Attr::MovementSpeed, base);
+        assert_eq!(speed(&adult), base);
     }
 }

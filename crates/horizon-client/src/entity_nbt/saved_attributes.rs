@@ -21,7 +21,7 @@ pub(super) fn forget_stale_modifiers(list: &mut [Tag], attr: Attr) {
 /// bases): each lands under its id, replacing one it already holds. A malformed
 /// entry is skipped; vanilla drops the whole list for one.
 pub(super) fn read_attribute_modifiers(m: &mut Mob, tag: &Tag) {
-    use crate::mobs::finalize::{Op, add_modifier};
+    use crate::mobs::finalize::{Op, apply_saved};
     let Some(Tag::List(attrs)) = tag.get("attributes") else {
         return;
     };
@@ -39,6 +39,7 @@ pub(super) fn read_attribute_modifiers(m: &mut Mob, tag: &Tag) {
         if attr == Attr::Armor {
             continue;
         }
+        let mut rows = Vec::new();
         for x in modifiers {
             let (Some(id), Some(amount)) = (text(x.get("id")), float(x.get("amount"))) else {
                 continue;
@@ -55,8 +56,10 @@ pub(super) fn read_attribute_modifiers(m: &mut Mob, tag: &Tag) {
             } else {
                 format!("minecraft:{id}")
             };
-            add_modifier(m, attr, id, amount, op);
+            rows.push((id, amount, op));
         }
+        // AttributeInstance.apply for the attribute's whole packed list.
+        apply_saved(m, attr, &rows);
     }
 }
 
@@ -152,7 +155,7 @@ mod saved_attribute_modifier_tests {
         ));
         // 0.23 * (1 - 0.5).
         assert_eq!(finalize::value(&m, Attr::MovementSpeed), 0.115);
-        assert_eq!(m.attrs.speed, 0.115);
+        assert_eq!(m.movement_speed(), 0.115);
     }
     #[test]
     fn the_save_does_not_echo_a_modifier_the_load_removed() {
@@ -188,15 +191,19 @@ mod saved_attribute_modifier_tests {
             {id:"t:keep",amount:0.1d,operation:"add_value"}]}]"#;
         for (extra, baby) in [("", false), ("IsBaby:0b,", false), ("IsBaby:1b,", true)] {
             let m = load(saved, extra);
+            // The saved permanent minecraft:baby is gone: setBaby removed it.
             assert!(
-                !finalize::has_modifier(&m, Attr::MovementSpeed, "minecraft:baby"),
+                finalize::modifier(&m, Attr::MovementSpeed, "minecraft:baby")
+                    .is_none_or(|x| x.transient),
                 "{extra}"
             );
             assert!(finalize::has_modifier(&m, Attr::MovementSpeed, "t:keep"));
             assert_eq!(m.is_baby(), baby, "{extra}");
             // A baby holds the transient modifier instead, an adult none.
             assert_eq!(
-                finalize::transient(&m, Attr::MovementSpeed),
+                finalize::modifier(&m, Attr::MovementSpeed, "minecraft:baby")
+                    .filter(|x| x.transient)
+                    .map(|x| (x.amount, x.op)),
                 baby.then_some((0.5, Op::AddMultipliedBase)),
                 "{extra}"
             );

@@ -1062,7 +1062,14 @@ pub fn mob_to_nbt(
             if let Some(Tag::List(list)) = map.get(&"attributes".into()) {
                 let modelled = [
                     ("minecraft:max_health", f64::from(m.attrs.max_health)),
-                    ("minecraft:movement_speed", m.attrs.speed),
+                    // AttributeMap.pack writes the base, not the value (#13783).
+                    (
+                        "minecraft:movement_speed",
+                        crate::mobs::finalize::base_value(
+                            m,
+                            crate::mobs::finalize::Attr::MovementSpeed,
+                        ),
+                    ),
                     ("minecraft:jump_strength", m.extra.vector[0]),
                 ];
                 let attributes = list
@@ -1721,9 +1728,8 @@ fn put_attributes(map: &mut Compound, m: &Mob, a: &crate::mobs::finalize::Attrib
         _ => Vec::new(),
     };
     for attr in Attr::ALL {
-        let modifiers: Vec<Tag> = a
-            .modifiers
-            .iter()
+        // AttributeInstance.pack: the permanent rows only (#13783).
+        let modifiers: Vec<Tag> = finalize::saved_modifiers(a)
             .filter(|x| x.attr == attr)
             .map(|x| {
                 let op = match x.op {
@@ -1954,7 +1960,9 @@ pub fn mob_from_nbt_with_random(
                         v,
                     )
                 }
-                "minecraft:movement_speed" => m.attrs.speed = v,
+                // The type's default: base_value already reads it; movement
+                // reads the instance, so there is no copy to set.
+                "minecraft:movement_speed" => {}
                 "minecraft:attack_damage"
                     if crate::mobs::finalize::default_value(
                         &m,

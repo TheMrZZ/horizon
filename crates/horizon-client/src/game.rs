@@ -12816,6 +12816,8 @@ mod recipe_book_variants_tests;
 #[cfg(test)]
 mod spawn_yaw_tests;
 #[cfg(test)]
+mod speed_row_tests;
+#[cfg(test)]
 mod stand_break_loot_tests;
 #[cfg(test)]
 mod stand_command_hurt_tests;

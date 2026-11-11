@@ -1064,7 +1064,6 @@ impl Damage {
 /// Per-mob attribute base values (the type's defaults unless changed).
 #[derive(Clone, Copy, Debug)]
 pub struct Attrs {
-    pub speed: f64,
     pub attack_damage: f32,
     /// `Attributes.ATTACK_KNOCKBACK`: what a melee hit adds to its push (half of it).
     pub attack_knockback: f64,
@@ -2833,7 +2832,8 @@ impl Mob {
             stats: [
                 f64::from(m.attrs.max_health),
                 m.extra.vector[0],
-                m.attrs.speed,
+                // The partner's base speed (AbstractHorse.setOffspringAttribute).
+                finalize::base_value(m, finalize::Attr::MovementSpeed),
             ],
             sitting: m.extra.sitting,
             silent: m.silent,
@@ -3439,7 +3439,6 @@ impl Mob {
             profile: None,
             random_textures: Default::default(),
             attrs: Attrs {
-                speed: kind.speed,
                 attack_damage: kind.attack_damage,
                 attack_knockback: kind.attack_knockback,
                 max_health: kind.max_health,
@@ -4194,25 +4193,25 @@ impl Mob {
             + (p.y - self.position.y).powi(2)
             + (p.z - self.position.z).powi(2)
     }
-    /// Movement speed attribute bonus (baby zombies, sprinting modifiers).
-    /// MOVEMENT_SPEED including effects (speed +20%/level, slowness -15%/level).
+    /// `getAttributeValue(MOVEMENT_SPEED)`: the base and every modifier the
+    /// instance holds (the baby, sprinting, a witch drinking, an enderman or
+    /// an angry zombified piglin attacking, a cold strider, the Speed effect's
+    /// stored row, `/attribute` rows) and the Slowness effect's, in
+    /// `AttributeInstance.calculateValue` order. #13783: one evaluator, so each
+    /// modifier counts once and a loaded Speed effect (no row) counts none.
     pub fn movement_speed(&self) -> f64 {
-        let mut v = strider::movement_speed(
-            self,
-            witch::speed(self, self.attrs.speed) + enderman::attacking_speed(self),
-        ) * self.speed_bonus();
-        // LivingEntity.SPEED_MODIFIER_SPRINTING: 0.3F, ADD_MULTIPLIED_TOTAL.
-        if self.extra.sprinting {
-            v *= 1.0 + f64::from(0.3f32);
+        finalize::value(self, finalize::Attr::MovementSpeed)
+    }
+    /// `Mob.setTarget`: every Java setTarget transition goes through here
+    /// (inventory: #13783 design `target-writes-inventory.tsv`). The value is
+    /// applied even when it is unchanged, as Java's setTarget runs its side
+    /// effects for any call: `Enderman.setTarget` adds or removes its
+    /// `minecraft:attacking` speed modifier.
+    pub fn set_target(&mut self, target: Option<Who>) {
+        self.ai.target = target;
+        if self.species() == Species::Enderman {
+            enderman::target_changed(self);
         }
-        for (e, _, amp) in &self.extra.effects {
-            match *e {
-                "minecraft:speed" => v *= 1.0 + 0.2 * f64::from(amp + 1),
-                "minecraft:slowness" => v *= (1.0 - 0.15 * f64::from(amp + 1)).max(0.0),
-                _ => {}
-            }
-        }
-        v
     }
     pub fn has_effect(&self, effect: &str) -> bool {
         self.extra.effects.iter().any(|e| e.0 == effect)
@@ -4385,8 +4384,12 @@ impl Mob {
             ConsumeEffect::ClearAllEffects => {
                 let had_absorption = self.has_effect("minecraft:absorption");
                 let had_boost = self.has_effect("minecraft:health_boost");
+                let had_speed = self.has_effect("minecraft:speed");
                 self.extra.effect_fallbacks.clear();
                 self.extra.effects.clear();
+                if had_speed {
+                    finalize::effect_attributes_changed(self, "minecraft:speed", None);
+                }
                 if had_absorption {
                     self.absorption = self.absorption.min(armor::max_absorption(self));
                 }
@@ -4397,6 +4400,7 @@ impl Mob {
             ConsumeEffect::RemoveEffects(ids) => {
                 let had_absorption = self.has_effect("minecraft:absorption");
                 let had_boost = self.has_effect("minecraft:health_boost");
+                let had_speed = self.has_effect("minecraft:speed");
                 self.extra.effects.retain(|e| {
                     let held = e.0.trim_start_matches("minecraft:");
                     !ids.iter()
@@ -4410,6 +4414,9 @@ impl Mob {
                 }
                 if had_boost && !self.has_effect("minecraft:health_boost") {
                     finalize::health_boost_changed(self);
+                }
+                if had_speed && !self.has_effect("minecraft:speed") {
+                    finalize::effect_attributes_changed(self, "minecraft:speed", None);
                 }
             }
             // `ApplyStatusEffectsConsumeEffect.apply`: one random draw, even at
@@ -4582,10 +4589,17 @@ impl Mob {
             let changed = active.update(&incoming);
             self.extra.effects[i] = (effect, active.duration, active.amplifier);
             self.set_effect_fallback(effect, active.hidden);
+            // onEffectUpdated(instance, true) only when update() changed it:
+            // MobEffect.addAttributeModifiers with the instance's amplifier.
+            if changed {
+                finalize::effect_attributes_changed(self, effect, Some(active.amplifier));
+            }
             Some(changed)
         } else {
             self.set_effect_fallback(effect, None);
             self.extra.effects.push((effect, ticks, amplifier));
+            // onEffectAdded: MobEffect.addAttributeModifiers.
+            finalize::effect_attributes_changed(self, effect, Some(amplifier));
             Some(true)
         };
         // AbsorptionMobEffect.onEffectStarted, which addEffect runs for every
@@ -4604,9 +4618,6 @@ impl Mob {
             finalize::health_boost_changed(self);
         }
         added
-    }
-    pub fn speed_bonus(&self) -> f64 {
-        ai::speed_bonus(self)
     }
     pub fn center(&self) -> [f64; 3] {
         [

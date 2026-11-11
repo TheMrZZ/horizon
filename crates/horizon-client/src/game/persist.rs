@@ -3940,8 +3940,12 @@ mod baby_modifier_mutation_tests {
         let m = &game.mobs[zombie(game, n)];
         (
             finalize::value(m, Attr::MovementSpeed),
-            finalize::modifier_amount(m, Attr::MovementSpeed, "minecraft:baby"),
-            finalize::transient(m, Attr::MovementSpeed).map(|t| t.0),
+            finalize::modifier(m, Attr::MovementSpeed, "minecraft:baby")
+                .filter(|x| !x.transient)
+                .map(|x| x.amount),
+            finalize::modifier(m, Attr::MovementSpeed, "minecraft:baby")
+                .filter(|x| x.transient)
+                .map(|x| x.amount),
         )
     }
     fn close(a: f64, b: f64) -> bool {
@@ -4070,10 +4074,15 @@ mod baby_modifier_mutation_tests {
             );
             let mut failures = Vec::new();
             finalize::set_baby(m, true);
-            if finalize::modifier_amount(m, Attr::MovementSpeed, "minecraft:baby").is_some() {
+            let baby_row = |m: &horizon_client::mobs::Mob, transient: bool| {
+                finalize::modifier(m, Attr::MovementSpeed, "minecraft:baby")
+                    .filter(|x| x.transient == transient)
+                    .map(|x| x.amount)
+            };
+            if baby_row(m, false).is_some() {
                 failures.push("baby: the permanent minecraft:baby stayed".to_string());
             }
-            if finalize::transient(m, Attr::MovementSpeed).map(|t| t.0) != Some(0.5) {
+            if baby_row(m, true) != Some(0.5) {
                 failures.push("baby: no transient minecraft:baby".into());
             }
             if finalize::modifier_amount(m, Attr::MovementSpeed, "h235:other") != Some(0.01) {
@@ -4090,9 +4099,7 @@ mod baby_modifier_mutation_tests {
                 ));
             }
             finalize::set_baby(m, false);
-            if finalize::transient(m, Attr::MovementSpeed).is_some()
-                || finalize::modifier_amount(m, Attr::MovementSpeed, "minecraft:baby").is_some()
-            {
+            if finalize::has_modifier(m, Attr::MovementSpeed, "minecraft:baby") {
                 failures.push("adult: a minecraft:baby is left".into());
             }
             if !close(
@@ -4137,7 +4144,7 @@ mod baby_modifier_mutation_tests {
                 }
             }
             let copy = game.mobs[zombie(game, 11)].clone();
-            if finalize::transient(&copy, Attr::MovementSpeed).is_some() {
+            if finalize::has_modifier(&copy, Attr::MovementSpeed, "minecraft:baby") {
                 failures.push("a copy lost the removal".into());
             }
             let i = zombie(game, 11);

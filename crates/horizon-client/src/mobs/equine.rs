@@ -1,7 +1,7 @@
 //! Horses, donkeys, mules and the undead horses (`AbstractHorse`): random
 //! stats, coat colours and markings, eating, rearing, taming by riding,
 //! the ridden movement and jump, offspring stats and `AbstractEquineModel`.
-use super::finalize::{Attr, set_base};
+use super::finalize::{Attr, base_value, set_base};
 use super::{
     Mob, MobEvent, MobWorld, Species,
     anim::{Poses, State},
@@ -293,7 +293,14 @@ pub fn inherit(child: &mut Mob, a: &Mob, b: &Mob, r: &mut impl RandomSource) {
     set_base(child, Attr::MaxHealth, f64::from(health as f32));
     child.health = child.attrs.max_health;
     child.extra.vector[0] = offspring(a.extra.vector[0], b.extra.vector[0], 0.4, 1.0, r);
-    let speed = offspring(a.attrs.speed, b.attrs.speed, 0.1125, 0.3375, r);
+    // AbstractHorse.setOffspringAttribute: getAttributeBaseValue of both parents.
+    let speed = offspring(
+        base_value(a, Attr::MovementSpeed),
+        base_value(b, Attr::MovementSpeed),
+        0.1125,
+        0.3375,
+        r,
+    );
     set_base(child, Attr::MovementSpeed, speed);
 }
 /// The rider controls the mount: saddled, with a player on it.
@@ -1308,7 +1315,10 @@ mod tests {
         }
         let mut m = horse(Species::Horse);
         finalize(&mut m);
-        assert_eq!(base_value(&m, Attr::MovementSpeed), m.attrs.speed);
+        assert_eq!(
+            base_value(&m, Attr::MovementSpeed),
+            crate::mobs::finalize::value(&m, Attr::MovementSpeed)
+        );
     }
 
     fn equine(id: u32, species: Species, name: &str) -> Mob {

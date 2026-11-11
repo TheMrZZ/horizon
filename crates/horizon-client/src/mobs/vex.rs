@@ -178,13 +178,15 @@ impl Goal for CopyOwnerTarget {
     fn can_continue(&mut self, m: &mut Mob, cx: &mut Cx) -> bool {
         m.target_info(cx.w).is_some_and(|t| t.alive)
     }
+    /// `VexCopyOwnerTargetGoal.start`: `setTarget(owner.getTarget())`.
     fn start(&mut self, m: &mut Mob, cx: &mut Cx) {
-        m.ai.target = owner(m, cx.w.who_lookup).and_then(|owner| {
+        let target = owner(m, cx.w.who_lookup).and_then(|owner| {
             cx.w.others
                 .iter()
                 .find(|s| s.id == owner)
                 .and_then(|s| s.target)
         });
+        m.set_target(target);
     }
 }
 /// `TargetingConditions.test` for the owner's target: `canBeSeenByAnyone`

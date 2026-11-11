@@ -145,7 +145,8 @@ pub fn breed_offspring(m: &mut Mob, partner: &Seen) -> Offspring {
     let (health, jump, speed, own) = (
         f64::from(m.attrs.max_health),
         m.extra.vector[0],
-        m.attrs.speed,
+        // AbstractHorse.setOffspringAttribute: the parent's base value.
+        super::finalize::base_value(m, super::finalize::Attr::MovementSpeed),
         m.extra.variant,
     );
     let r = &mut m.random;

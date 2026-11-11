@@ -241,15 +241,8 @@ fn witch_attack(m: &mut Mob, who: Who, _power: f32, cx: &mut Cx) {
     // when the witch is not silent.
     witch_sound(m, cx.events, "entity.witch.throw");
 }
-/// The movement speed of a witch with `SPEED_MODIFIER_DRINKING` (-0.25,
-/// `ADD_VALUE`) while it drinks: it stands still for the 32 ticks.
-pub fn speed(m: &Mob, base: f64) -> f64 {
-    if m.species() == Species::Witch && m.extra.flag {
-        (base - 0.25).max(0.0)
-    } else {
-        base
-    }
-}
+/// `Witch.SPEED_MODIFIER_DRINKING`: `minecraft:drinking`, -0.25, ADD_VALUE.
+const DRINKING_ID: &str = "minecraft:drinking";
 /// Witch.aiStep before `super.aiStep()`: the healing cooldown, then drink
 /// water breathing, fire resistance, healing or swiftness.
 pub fn ai_step(m: &mut Mob, cx_events: &mut Vec<MobEvent>, target_far: bool) {
@@ -288,6 +281,8 @@ fn drink(m: &mut Mob, cx_events: &mut Vec<MobEvent>, target_far: bool) {
                 }
             }
             m.extra.flag = false;
+            // Witch.aiStep at the drink's end: removeModifier(drinking).
+            super::finalize::remove_modifier(m, super::finalize::Attr::MovementSpeed, DRINKING_ID);
         }
         return;
     }
@@ -317,6 +312,11 @@ fn drink(m: &mut Mob, cx_events: &mut Vec<MobEvent>, target_far: bool) {
         // PotionItem use duration 32 ticks.
         m.extra.using_item = 32;
         m.extra.flag = true;
+        // Witch.aiStep at the drink's start: removeModifier(drinking), then
+        // addTransientModifier(SPEED_MODIFIER_DRINKING).
+        use super::finalize::{self, Attr, Op};
+        finalize::remove_modifier(m, Attr::MovementSpeed, DRINKING_ID);
+        finalize::add_transient(m, Attr::MovementSpeed, DRINKING_ID, -0.25, Op::AddValue);
         // Witch.aiStep: the drink sound, and its pitch draw, only when the
         // witch is not silent.
         witch_sound(m, cx_events, "entity.witch.drink");
@@ -401,6 +401,35 @@ mod tests {
         Mob::new(1, Arc::new(kind), Vec3::ZERO, 0.0)
     }
 
+    /// #13783: Witch.aiStep adds the transient SPEED_MODIFIER_DRINKING
+    /// (`minecraft:drinking`, -0.25, ADD_VALUE) at a drink's start and removes
+    /// it at its end.
+    #[test]
+    fn a_drinking_witch_holds_the_drinking_modifier_until_the_drink_ends() {
+        use crate::mobs::finalize::{self, Attr};
+        use horizon_core::random::LegacyRandom;
+        let mut m = witch();
+        m.random = LegacyRandom::new(1);
+        m.fluids.eye_in_water = true;
+        let mut events = Vec::new();
+        for _ in 0..40 {
+            if m.extra.flag {
+                break;
+            }
+            drink(&mut m, &mut events, false);
+        }
+        assert!(m.extra.flag, "no drink started");
+        let row = finalize::modifier(&m, Attr::MovementSpeed, "minecraft:drinking").unwrap();
+        assert_eq!((row.amount, row.transient), (-0.25, true));
+        while m.extra.flag {
+            drink(&mut m, &mut events, false);
+        }
+        assert!(!finalize::has_modifier(
+            &m,
+            Attr::MovementSpeed,
+            "minecraft:drinking"
+        ));
+    }
     /// How many drink sounds forty attempts produce. Vanilla plays
     /// `entity.witch.drink` at volume 1, and skips it when the witch is silent.
     fn drink_sounds(silent: bool) -> usize {

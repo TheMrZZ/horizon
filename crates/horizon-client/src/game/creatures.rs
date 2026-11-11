@@ -2990,7 +2990,7 @@ impl Game<'_> {
                 }
                 MobEvent::SetTarget { mob, target } => {
                     if let Some(m) = self.mobs.iter_mut().find(|m| m.id == mob) {
-                        m.ai.target = Some(target);
+                        m.set_target(Some(target));
                     }
                 }
                 MobEvent::HoglinAttackTarget { mob, target } => {
@@ -3012,7 +3012,7 @@ impl Game<'_> {
                     if let Some(m) = self.mobs.iter_mut().find(|m| m.id == mob) {
                         m.extra.ints[0] = ticks;
                         if m.ai.target.is_none() {
-                            m.ai.target = Some(Who::Mob(target));
+                            m.set_target(Some(Who::Mob(target)));
                         }
                     }
                 }
@@ -3571,7 +3571,7 @@ impl Game<'_> {
                     aggressive,
                 } => {
                     if let Some(m) = self.mobs.iter_mut().find(|m| m.id == mob) {
-                        m.ai.target = Some(target);
+                        m.set_target(Some(target));
                         m.ai.aggressive |= aggressive;
                     }
                 }
@@ -6783,7 +6783,7 @@ impl Game<'_> {
                 m.extra.sitting = !m.extra.sitting;
                 m.ai.jumping = false;
                 m.nav_stop();
-                m.ai.target = None;
+                m.set_target(None);
                 self.world.modified.insert((
                     m.position.x.floor() as i32 >> 4,
                     m.position.z.floor() as i32 >> 4,
@@ -6801,7 +6801,7 @@ impl Game<'_> {
                     m.extra.owner = Some(acting);
                     m.persistent = true;
                     m.nav_stop();
-                    m.ai.target = None;
+                    m.set_target(None);
                     m.extra.sitting = true;
                 }
                 // TamableAnimal.spawnTamingParticles (entity event 7 or 6).

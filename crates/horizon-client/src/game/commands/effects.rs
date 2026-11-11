@@ -160,6 +160,7 @@ impl Game<'_> {
                                 .any(|x| x.0 == "minecraft:health_boost")
                         };
                         let had_boost = boosted(m);
+                        let had_speed = m.has_effect("minecraft:speed");
                         m.extra
                             .effects
                             .retain(|x| e.is_some_and(|e| x.0 != namespaced(e.id)));
@@ -172,6 +173,14 @@ impl Game<'_> {
                         // LivingEntity.onEffectsRemoved -> refreshDirtyAttributes.
                         if had_boost && !boosted(m) {
                             horizon_client::mobs::finalize::health_boost_changed(m);
+                        }
+                        // onEffectsRemoved -> removeAttributeModifiers (#13783).
+                        if had_speed && !m.has_effect("minecraft:speed") {
+                            horizon_client::mobs::finalize::effect_attributes_changed(
+                                m,
+                                "minecraft:speed",
+                                None,
+                            );
                         }
                         let left = &m.extra.effects;
                         m.extra

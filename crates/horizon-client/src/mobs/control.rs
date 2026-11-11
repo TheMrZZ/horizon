@@ -41,6 +41,11 @@ pub struct MoveControl {
     pub strafe_forwards: f32,
     pub strafe_right: f32,
     pub operation: Operation,
+    /// `Phantom.PhantomMoveControl.speed`: the phantom's own flight speed,
+    /// 0.1F when the control is made (`phantom::register`, so a load starts
+    /// at 0.1F again) and after a horizontal collision; never saved and not
+    /// the movement attribute. Unused by other mobs.
+    pub phantom_speed: f32,
 }
 impl MoveControl {
     pub fn has_wanted(&self) -> bool {

@@ -1012,7 +1012,11 @@ mod tests {
     fn water_travel_uses_get_speed_and_scales_by_nine_tenths() {
         let ran = crate::mobs::world::with_test_world(&[], |w, _| {
             let mut m = frog();
-            m.attrs.speed = 1.0;
+            crate::mobs::finalize::set_base(
+                &mut m,
+                crate::mobs::finalize::Attr::MovementSpeed,
+                1.0,
+            );
             m.ai.speed = 0.25;
             m.yaw = 0.0;
             m.velocity = Vec3::new(1.0, -0.5, 0.125);

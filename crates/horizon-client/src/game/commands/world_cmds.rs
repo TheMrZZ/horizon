@@ -1301,12 +1301,9 @@ impl Game<'_> {
                         )))
                     }
                     "attribute.modifier.add" => {
-                        // AttributeInstance.hasModifier: the modeled transient
-                        // minecraft:baby counts too.
-                        if finalize::has_modifier(m, attr, &modifier_id)
-                            || (modifier_id == "minecraft:baby"
-                                && finalize::transient(m, attr).is_some())
-                        {
+                        // AttributeInstance.hasModifier: any active row, transient
+                        // (minecraft:baby, an effect's, a mob state's) or permanent.
+                        if finalize::has_modifier(m, attr, &modifier_id) {
                             return Err(text_error(
                                 "commands.attribute.failed.modifier_already_present",
                                 &[Text::literal(modifier_id.clone()), description, name],
@@ -1327,17 +1324,11 @@ impl Game<'_> {
                         )))
                     }
                     "attribute.modifier.remove" => {
-                        // AttributeInstance.removeModifier: a permanent one, else
-                        // the modeled transient minecraft:baby (until setBaby).
+                        // AttributeInstance.removeModifier: any active row; a
+                        // transient one comes back at its next state change
+                        // (minecraft:baby at the next setBaby).
                         if finalize::has_modifier(m, attr, &modifier_id) {
                             finalize::remove_modifier(m, attr, &modifier_id);
-                        } else if modifier_id == "minecraft:baby"
-                            && finalize::transient(m, attr).is_some()
-                        {
-                            m.extra
-                                .attributes
-                                .get_or_insert_with(Box::default)
-                                .baby_speed_removed = true;
                         } else {
                             return Err(no_modifier);
                         }
@@ -1350,14 +1341,8 @@ impl Game<'_> {
                         )))
                     }
                     _ => {
-                        // Permanent entries stay authoritative. The modeled baby
-                        // modifier is transient and absent from that saved store.
-                        let amount =
-                            finalize::modifier_amount(m, attr, &modifier_id).or_else(|| {
-                                finalize::transient(m, attr)
-                                    .filter(|_| modifier_id == "minecraft:baby")
-                                    .map(|(amount, _)| amount)
-                            });
+                        // AttributeInstance.getModifier: the active row, transient or not.
+                        let amount = finalize::modifier_amount(m, attr, &modifier_id);
                         let Some(v) = amount else {
                             return Err(no_modifier);
                         };
@@ -2807,6 +2792,183 @@ mod vehicle_damage_command_tests {
                     );
                 }
             }
+        });
+    }
+}
+
+#[cfg(test)]
+mod loaded_speed_effect_modifier_tests {
+    //! A directly loaded `active_effects` Speed II applies no attribute modifier (Java: the modifier is added
+    //! only by `LivingEntity.onEffectAdded`), while a real `/effect give` does. Same NoAI pig route as the
+    //! retained Java capture (loaded 0.25/250, command 0.35/350, base 0.25 for both). No restart is claimed here.
+    use crate::game::{Audio, Game, Options, Progress, Settings, load_resources};
+    use horizon_client::chunk::Chunk;
+    use horizon_core::position::ChunkPos;
+    use std::sync::Arc;
+
+    fn with_game(test: impl FnOnce(&mut Game<'_>)) {
+        let root = std::path::PathBuf::from(std::env::var_os("HORIZON_TEST_RESOURCES").unwrap());
+        let settings = Settings::default();
+        let loaded = load_resources(
+            root.clone(),
+            None,
+            &root,
+            &settings,
+            std::time::Instant::now(),
+            false,
+            true,
+            &Progress::new(),
+            &mut |_, _| unreachable!(),
+        )
+        .unwrap();
+        let mut options = Options::parse(std::iter::empty()).unwrap().unwrap();
+        options.resources = root.clone();
+        options.game_dir = Some(
+            std::path::PathBuf::from(std::env::var_os("HORIZON_HOME").unwrap())
+                .join(format!("loaded-speed-{:?}", std::thread::current().id())),
+        );
+        options.player_name = Some("Player".into());
+        options.execution_role = crate::game::execution_role::ExecutionRole::IntegratedServer;
+        let mut game = Game::new(
+            &loaded.resources,
+            loaded.pack,
+            loaded.gui.unwrap(),
+            options,
+            settings,
+            Audio::silent(&root),
+            None,
+        )
+        .unwrap();
+        game.build_registries();
+        game.set_allow_commands(true);
+        game.world
+            .chunks
+            .insert((0, 0), Arc::new(Chunk::empty(0, 0)));
+        game.block_ticks
+            .add_empty_chunk(ChunkPos::new(0, 0))
+            .unwrap();
+        assert!(game.run_command("forceload add 0 0"));
+        test(&mut game);
+    }
+
+    /// Run one command; return (accepted, its messages as plain text, its callback results).
+    fn run(game: &mut Game<'_>, command: &str) -> (bool, Vec<String>, Vec<(bool, i32)>) {
+        game.chat_capture = Some(Vec::new());
+        game.cmds.results = Some(Vec::new());
+        let ok = game.run_command(command);
+        let messages = game
+            .chat_capture
+            .take()
+            .unwrap()
+            .iter()
+            .map(|m| m.plain())
+            .collect();
+        (ok, messages, game.cmds.results.take().unwrap())
+    }
+
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+    fn a_loaded_speed_effect_applies_no_modifier_but_a_given_one_does() {
+        with_game(|game| {
+            let loaded = "0000009f-0000-0000-0000-000000000001";
+            let given = "0000009f-0000-0000-0000-000000000002";
+            assert!(game.run_command(
+                "summon minecraft:pig 4.5 200 4.5 {UUID:[I;159,0,0,1],Tags:[\"loaded\"],NoAI:1b,NoGravity:1b,PersistenceRequired:1b,active_effects:[{id:\"minecraft:speed\",duration:-1,amplifier:1b}]}"
+            ));
+            assert!(game.run_command(
+                "summon minecraft:pig 6.5 200 4.5 {UUID:[I;159,0,0,2],Tags:[\"command\"],NoAI:1b,NoGravity:1b,PersistenceRequired:1b}"
+            ));
+            let clock = game.world.game_time;
+            // The real command: its own reply and callback.
+            let (ok, messages, results) = run(
+                game,
+                &format!("effect give {given} minecraft:speed infinite 1"),
+            );
+            assert!(ok);
+            assert_eq!(messages, ["Applied effect Speed to Pig"]);
+            assert_eq!(results, [(true, 1)]);
+            // Admissions: the actual actors, their effect bodies and AI flag.
+            for (uuid, tag) in [(loaded, "loaded"), (given, "command")] {
+                let (ok, _, results) = run(
+                    game,
+                    &format!("execute if entity @e[type=minecraft:pig,tag={tag}]"),
+                );
+                assert!(ok && results == [(true, 1)], "{tag} actor");
+                let (ok, messages, _) = run(game, &format!("data get entity {uuid} UUID"));
+                assert!(ok, "{tag} UUID");
+                assert!(
+                    messages[0].starts_with("Pig has the following entity data: [I; 159, 0, 0, "),
+                    "{messages:?}"
+                );
+                let (ok, messages, _) = run(game, &format!("data get entity {uuid} NoAI"));
+                assert!(
+                    ok && messages == ["Pig has the following entity data: 1b"],
+                    "{tag} NoAI {messages:?}"
+                );
+                let path = "active_effects[{id:\"minecraft:speed\"}]";
+                let (ok, _, results) =
+                    run(game, &format!("data get entity {uuid} {path}.amplifier"));
+                assert!(ok && results == [(true, 1)], "{tag} amplifier {results:?}");
+                let (ok, _, results) =
+                    run(game, &format!("data get entity {uuid} {path}.duration"));
+                assert!(ok && results == [(true, -1)], "{tag} duration {results:?}");
+            }
+            // Base getters: both 0.25 (scale 1000 = 250).
+            for uuid in [loaded, given] {
+                let (ok, messages, results) = run(
+                    game,
+                    &format!("attribute {uuid} minecraft:movement_speed base get 1000"),
+                );
+                assert!(
+                    ok && results == [(true, 250)],
+                    "{uuid} base {messages:?} {results:?}"
+                );
+            }
+            // The four final observations, each compared with the Java capture; all are reported together.
+            let modifier = |uuid: &str| {
+                format!(
+                    "attribute {uuid} minecraft:movement_speed modifier value get minecraft:effect.speed 1000"
+                )
+            };
+            let value = |uuid: &str| format!("attribute {uuid} minecraft:movement_speed get 1000");
+            let observed = [
+                ("given/modifier", run(game, &modifier(given))),
+                ("given/value", run(game, &value(given))),
+                ("loaded/modifier", run(game, &modifier(loaded))),
+                ("loaded/value", run(game, &value(loaded))),
+            ];
+            assert_eq!(game.world.game_time, clock, "zero observation ticks");
+            let no_modifier = vec![
+                "Attribute Speed for entity Pig has no modifier minecraft:effect.speed".to_string(),
+            ];
+            let expected: [(&str, bool, Option<Vec<String>>, Vec<(bool, i32)>); 4] = [
+                // Command-applied effect: the actual modifier exists, and the value includes it.
+                ("given/modifier", true, None, vec![(true, 400)]),
+                ("given/value", true, None, vec![(true, 350)]),
+                // Directly loaded effect: no modifier (the query fails; its 0 is not a numeric result), value 0.25.
+                (
+                    "loaded/modifier",
+                    false,
+                    Some(no_modifier),
+                    vec![(false, 0)],
+                ),
+                ("loaded/value", true, None, vec![(true, 250)]),
+            ];
+            let mut failures = Vec::new();
+            for ((label, (ok, messages, results)), (_, want_ok, want_messages, want_results)) in
+                observed.iter().zip(&expected)
+            {
+                let message_ok = want_messages.as_ref().is_none_or(|m| m == messages);
+                if *ok != *want_ok || !message_ok || *results != *want_results {
+                    failures.push(format!(
+                        "{label}: ok {ok} messages {messages:?} results {results:?}"
+                    ));
+                }
+            }
+            assert!(
+                failures.is_empty(),
+                "loaded/given speed modifier observations differ from Java: {failures:#?}"
+            );
         });
     }
 }

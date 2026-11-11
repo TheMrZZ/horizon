@@ -1082,7 +1082,11 @@ mod cooldown_memory_tests {
                     ] {
                         let tag = raw(id, state, no_ai);
                         let mut m = crate::entity_nbt::mob_from_nbt(&tag, &types, 7, None).unwrap();
-                        m.attrs.speed = 0.0;
+                        crate::mobs::finalize::set_base(
+                            &mut m,
+                            crate::mobs::finalize::Attr::MovementSpeed,
+                            0.0,
+                        );
                         let mut level_random = horizon_core::random::LegacyRandom::new(140);
                         let mut events = Vec::new();
                         for elapsed in 0..=6 {

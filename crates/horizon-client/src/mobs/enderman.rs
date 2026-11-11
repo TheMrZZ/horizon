@@ -216,13 +216,19 @@ fn teleport_towards(
     let z = m.position.z + (m.random.next_double() - 0.5) * 8.0 - d[2] * 16.0;
     teleport_to(m, w, x, y, z, events)
 }
-/// `Enderman.SPEED_MODIFIER_ATTACKING`, an ADD_VALUE modifier `setTarget`
-/// adds while the enderman has a target.
-pub fn attacking_speed(m: &Mob) -> f64 {
-    if m.species() == Species::Enderman && m.ai.target.is_some() {
-        f64::from(0.15f32)
+/// `Enderman.setTarget` after `Mob.setTarget`: a target adds the transient
+/// `SPEED_MODIFIER_ATTACKING` (`minecraft:attacking`, 0.15F, ADD_VALUE) unless
+/// a modifier with that id is there (a manual one stays); no target removes
+/// whatever holds the id.
+pub fn target_changed(m: &mut Mob) {
+    use super::finalize::{self, Attr, Op};
+    const ID: &str = "minecraft:attacking";
+    if m.ai.target.is_some() {
+        if !finalize::has_modifier(m, Attr::MovementSpeed, ID) {
+            finalize::add_transient(m, Attr::MovementSpeed, ID, f64::from(0.15f32), Op::AddValue);
+        }
     } else {
-        0.0
+        finalize::remove_modifier(m, Attr::MovementSpeed, ID);
     }
 }
 /// Enderman.customServerAiStep: in daylight, flee by teleporting. The End has a
@@ -238,7 +244,7 @@ pub fn custom_server_ai_step(m: &mut Mob, cx: &mut Cx) {
         );
         if br > 0.5 && cx.w.can_see_sky(x, y, z) && m.random.next_float() * 30.0 < (br - 0.4) * 2.0
         {
-            m.ai.target = None;
+            m.set_target(None);
             teleport_random(m, cx.w, cx.events);
         }
     }
@@ -385,7 +391,7 @@ impl Goal for LookForPlayer {
     }
     fn stop(&mut self, m: &mut Mob, _: &mut Cx) {
         self.pending = false;
-        m.ai.target = None;
+        m.set_target(None);
     }
     fn can_continue(&mut self, m: &mut Mob, cx: &mut Cx) -> bool {
         let Some(p) = cx.w.player.clone() else {
@@ -408,7 +414,7 @@ impl Goal for LookForPlayer {
             self.aggro -= 1;
             if self.aggro <= 0 {
                 self.pending = false;
-                m.ai.target = Some(Who::Player);
+                m.set_target(Some(Who::Player));
                 cx.events.push(MobEvent::Sound(
                     "entity.enderman.stare",
                     m.center(),

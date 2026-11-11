@@ -468,11 +468,25 @@ fn drowned_close_to_next_pos(m: &Mob) -> bool {
         m.distance_sqr(Vec3::new(f64::from(t[0]), f64::from(t[1]), f64::from(t[2]))) < 4.0
     })
 }
+/// `ZombifiedPiglin.customServerAiStep`, before `updatePersistentAnger`: an
+/// angry adult without the id adds the transient SPEED_MODIFIER_ATTACKING
+/// (`minecraft:attacking`, 0.05, ADD_VALUE); a calm one removes the id. A
+/// manual row with the id stays while angry; becoming a baby removes nothing.
+pub(crate) fn zombified_piglin_attacking_speed(m: &mut Mob) {
+    use super::finalize::{self, Attr, Op};
+    const ID: &str = "minecraft:attacking";
+    if m.extra.anger > 0 {
+        if !m.is_baby() && !finalize::has_modifier(m, Attr::MovementSpeed, ID) {
+            finalize::add_transient(m, Attr::MovementSpeed, ID, 0.05, Op::AddValue);
+        }
+    } else if finalize::has_modifier(m, Attr::MovementSpeed, ID) {
+        finalize::remove_modifier(m, Attr::MovementSpeed, ID);
+    }
+}
 /// Zombie drowning conversion (Zombie.DrowningTracker) and husk -> zombie.
 /// `ZombifiedPiglin.customServerAiStep`: faster and loud while angry,
 /// forgetting the player when the anger runs out, rallying the others.
 fn zombified_piglin_step(m: &mut Mob, cx: &mut Cx) {
-    let base = 0.23;
     // NeutralMob.updatePersistentAnger: a new target starts 20-39 s of anger.
     if m.ai.target.is_some() && !m.extra.flag2 {
         m.extra.flag2 = true;
@@ -488,11 +502,9 @@ fn zombified_piglin_step(m: &mut Mob, cx: &mut Cx) {
     if m.ai.target.is_some() {
         m.extra.angry_at = m.ai.target;
     }
+    zombified_piglin_attacking_speed(m);
     if m.extra.anger > 0 {
         m.extra.anger -= 1;
-        if !m.is_baby() {
-            m.attrs.speed = base + 0.05;
-        }
         // playFirstAngerSoundIn
         if m.extra.counter > 0 {
             m.extra.counter -= 1;
@@ -514,8 +526,6 @@ fn zombified_piglin_step(m: &mut Mob, cx: &mut Cx) {
             m.extra.anger_end = -1;
             m.extra.flag2 = false;
         }
-    } else {
-        m.attrs.speed = base;
     }
     // maybeAlertOthers every 4 to 6 seconds while seeing the target.
     if let Some(target) = m.ai.target {

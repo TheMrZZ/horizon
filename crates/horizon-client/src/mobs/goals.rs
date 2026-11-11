@@ -1428,7 +1428,7 @@ impl Goal for MeleeAttack {
             && t.is_player
             && t.creative
         {
-            m.ai.target = None;
+            m.set_target(None);
         }
         m.ai.aggressive = false;
         m.nav_stop();
@@ -1768,11 +1768,11 @@ impl Goal for NearestTarget {
         target_continue(&mut self.target_goal, self.must_see, m, cx)
     }
     fn start(&mut self, m: &mut Mob, _: &mut Cx) {
-        m.ai.target = self.found;
+        m.set_target(self.found);
         self.target_goal.unseen = 0;
     }
     fn stop(&mut self, m: &mut Mob, _: &mut Cx) {
-        m.ai.target = None;
+        m.set_target(None);
     }
 }
 /// HurtByTargetGoal (optionally alerting others of the same species).
@@ -1889,7 +1889,7 @@ impl Goal for HurtByTarget {
         target_continue(&mut self.st, true, m, cx)
     }
     fn start(&mut self, m: &mut Mob, cx: &mut Cx) {
-        m.ai.target = m.ai.last_hurt_by;
+        m.set_target(m.ai.last_hurt_by);
         self.timestamp = m.ai.last_hurt_by_time;
         self.st.unseen_memory = 300;
         self.st.unseen = 0;
@@ -1950,11 +1950,11 @@ impl Goal for HurtByTarget {
             }
         }
         if cub {
-            m.ai.target = None;
+            m.set_target(None);
         }
     }
     fn stop(&mut self, m: &mut Mob, _: &mut Cx) {
-        m.ai.target = None;
+        m.set_target(None);
     }
 }
 /// What an AvoidEntityGoal flees from.

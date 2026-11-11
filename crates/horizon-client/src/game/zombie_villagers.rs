@@ -270,6 +270,17 @@ fn carry_over(from: &Mob, to: &mut Mob) {
     {
         horizon_client::mobs::finalize::health_boost_changed(to);
     }
+    // convertCommon: newMob.addEffect(new MobEffectInstance(e)) for each one,
+    // so a copied Speed gets its modifier (#13783).
+    if let Some(amp) = to
+        .extra
+        .effects
+        .iter()
+        .find(|e| e.0 == "minecraft:speed")
+        .map(|e| e.2)
+    {
+        horizon_client::mobs::finalize::effect_attributes_changed(to, "minecraft:speed", Some(amp));
+    }
     // VillagerData and the trades, experience and gossip.
     to.extra.variant = from.extra.variant;
     to.extra.variant2 = from.extra.variant2;

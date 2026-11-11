@@ -22,6 +22,7 @@
 use super::{Mob, Species, farm::Climate, gear, spawning::LocalDifficulty};
 use crate::{enchant::Enchantments, items::Items};
 use horizon_core::{geometry::Aabb, random::RandomSource};
+use horizon_world::attributes::{self as world_attributes, Definition, Instance, Operation};
 use serde_json::Value;
 use std::{fs, path::Path, sync::Arc};
 
@@ -473,24 +474,102 @@ pub enum Op {
     AddMultipliedBase,
     AddMultipliedTotal,
 }
-/// A permanent attribute modifier (`AttributeModifier`).
+/// One modifier as an instance holds it (a snapshot of the world model's
+/// `Modifier`): `transient` when it is not the instance's permanent row
+/// (`addTransientModifier`, `addOrUpdateTransientModifier`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Modifier {
     pub attr: Attr,
-    pub id: std::borrow::Cow<'static, str>,
+    pub id: String,
     pub amount: f64,
     pub op: Op,
+    pub transient: bool,
 }
-/// Attribute base values that differ from the type's and the permanent
-/// modifiers finalizeSpawn added, in the order vanilla adds them.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// Attribute base values that differ from the type's, and one exact
+/// `AttributeInstance` (`horizon_world::attributes::Instance`: the active map,
+/// the permanent map and the three operation buckets with their fastutil slot
+/// history) for each attribute that has held a modifier (#13783).
+#[derive(Clone, Debug, Default)]
 pub struct Attributes {
     pub bases: Vec<(Attr, f64)>,
-    pub modifiers: Vec<Modifier>,
-    /// The transient minecraft:baby speed modifier was taken away
-    /// (`/attribute ... modifier remove`) until the next setBaby. Not
-    /// saved: a load runs setBaby again.
-    pub baby_speed_removed: bool,
+    instances: Vec<(Attr, Instance)>,
+}
+impl Attributes {
+    /// The attribute's instance, if one was made.
+    pub fn instance(&self, a: Attr) -> Option<&Instance> {
+        self.instances.iter().find(|(x, _)| *x == a).map(|(_, i)| i)
+    }
+    /// `AttributeInstance.getModifiers` (`modifierById`), the view `/attribute`
+    /// and the attribute packet read: each id once.
+    pub fn active(&self) -> impl Iterator<Item = Modifier> + '_ {
+        self.instances.iter().flat_map(|(a, i)| {
+            i.modifiers().iter().map(move |x| Modifier {
+                attr: *a,
+                id: x.id().to_owned(),
+                amount: x.amount(),
+                op: op_of(x.operation()),
+                transient: !i.permanent_modifiers().iter().any(|p| p.same_identity(x)),
+            })
+        })
+    }
+    /// `AttributeInstance.pack`: the permanent rows, which the save writes.
+    pub fn saved(&self) -> impl Iterator<Item = Modifier> + '_ {
+        self.instances.iter().flat_map(|(a, i)| {
+            i.permanent_modifiers().iter().map(move |x| Modifier {
+                attr: *a,
+                id: x.id().to_owned(),
+                amount: x.amount(),
+                op: op_of(x.operation()),
+                transient: false,
+            })
+        })
+    }
+}
+fn op_of(o: Operation) -> Op {
+    match o {
+        Operation::AddValue => Op::AddValue,
+        Operation::AddMultipliedBase => Op::AddMultipliedBase,
+        Operation::AddMultipliedTotal => Op::AddMultipliedTotal,
+    }
+}
+fn operation(o: Op) -> Operation {
+    match o {
+        Op::AddValue => Operation::AddValue,
+        Op::AddMultipliedBase => Operation::AddMultipliedBase,
+        Op::AddMultipliedTotal => Operation::AddMultipliedTotal,
+    }
+}
+/// The mob keeps no dirty listener on its instances: `refresh` copies values.
+struct Quiet;
+impl world_attributes::Observer for Quiet {
+    type Error = std::convert::Infallible;
+    fn dirty(&mut self, _: &mut Instance) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+/// A new instance for the attribute: its range (`RangedAttribute`) and the
+/// mob's base value.
+fn fresh_instance(m: &Mob, a: Attr) -> Instance {
+    let base = base_value(m, a);
+    let (lo, hi) = a.range();
+    let definition =
+        Definition::ranged(base.clamp(lo, hi), lo, hi).unwrap_or_else(|_| Definition::basic(base));
+    let mut i = Instance::new(definition);
+    let _ = i.set_base_value(base, &mut Quiet);
+    i
+}
+/// The mob's persistent instance of the attribute, made on first use.
+fn instance_mut(m: &mut Mob, a: Attr) -> &mut Instance {
+    let fresh = fresh_instance(m, a);
+    let s = m.extra.attributes.get_or_insert_with(Box::default);
+    let i = match s.instances.iter().position(|(x, _)| *x == a) {
+        Some(i) => i,
+        None => {
+            s.instances.push((a, fresh));
+            s.instances.len() - 1
+        }
+    };
+    &mut s.instances[i].1
 }
 /// The attribute `/attribute` names (`follow_range`, not
 /// `minecraft:follow_range`) when gameplay reads it from this store. Armor
@@ -501,8 +580,15 @@ pub fn command_attr(short: &str) -> Option<Attr> {
         .find(|a| *a != Attr::Armor && a.name() == short)
 }
 /// The type's default value of an attribute, if the mob has it.
+/// The type's default base. For movement speed that is the type's loaded
+/// `speed` (`movement_speed`, or 0.25 when the type data has none), the value
+/// a new mob's speed started from before the instance held it.
 pub fn default_value(m: &Mob, a: Attr) -> Option<f64> {
-    m.kind.attributes.get(a.id()).copied()
+    m.kind
+        .attributes
+        .get(a.id())
+        .copied()
+        .or((a == Attr::MovementSpeed).then_some(m.kind.speed))
 }
 pub fn base_value(m: &Mob, a: Attr) -> f64 {
     base_value_with(m, a, || default_value(m, a))
@@ -570,35 +656,36 @@ fn age_attack_damage(s: Species, baby: bool) -> Option<f64> {
         _ => None,
     }
 }
-/// The transient modifiers of the mob's state (`SPEED_MODIFIER_BABY`).
-pub fn transient(m: &Mob, a: Attr) -> Option<(f64, Op)> {
-    if a != Attr::MovementSpeed
-        || !m.is_baby()
-        || m.extra
-            .attributes
-            .as_ref()
-            .is_some_and(|s| s.baby_speed_removed)
-    {
-        return None;
-    }
-    match m.species() {
+/// `Zombie.SPEED_MODIFIER_BABY` (0.5) and `Piglin.SPEED_MODIFIER_BABY`
+/// (0.2F): `minecraft:baby`, ADD_MULTIPLIED_BASE, which `setBaby` adds as a
+/// transient modifier. ZombifiedPiglin, Husk, Drowned and ZombieVillager are
+/// zombies.
+pub fn baby_speed_amount(s: Species) -> Option<f64> {
+    match s {
         Species::Zombie
         | Species::Husk
         | Species::Drowned
         | Species::ZombieVillager
-        | Species::ZombifiedPiglin => Some((0.5, Op::AddMultipliedBase)),
-        Species::Piglin => Some((f64::from(0.2f32), Op::AddMultipliedBase)),
+        | Species::ZombifiedPiglin => Some(0.5),
+        Species::Piglin => Some(f64::from(0.2f32)),
         _ => None,
     }
 }
-/// The attribute modifier one status effect grants (`MobEffect.addAttributeModifier`),
-/// scaled by the amplifier plus one; `None` when the effect does not touch `a`.
+pub const BABY_SPEED_ID: &str = "minecraft:baby";
+pub const SPRINTING_ID: &str = "minecraft:sprinting";
+pub const EFFECT_SPEED_ID: &str = "minecraft:effect.speed";
+/// The attribute modifier one status effect grants (`MobEffects`,
+/// `MobEffect.AttributeTemplate.create`: the amount times the amplifier plus
+/// one), for the effects whose modifier is still derived from the effect list
+/// on each read; `None` when the effect does not touch `a`. Speed is not here:
+/// its `minecraft:effect.speed` row is stored when the effect is added or
+/// updated and removed when it ends (`effect_attributes_changed`), as
+/// `LivingEntity.onEffectAdded` does, so a loaded Speed effect carries none.
 fn effect_modifier(effect: &str, amplifier: i32, a: Attr) -> Option<(f64, Op)> {
     let level = f64::from(amplifier + 1);
     match (effect.trim_start_matches("minecraft:"), a) {
         ("strength", Attr::AttackDamage) => Some((3.0 * level, Op::AddValue)),
         ("weakness", Attr::AttackDamage) => Some((-4.0 * level, Op::AddValue)),
-        ("speed", Attr::MovementSpeed) => Some((f64::from(0.2f32) * level, Op::AddMultipliedTotal)),
         ("slowness", Attr::MovementSpeed) => {
             Some((f64::from(-0.15f32) * level, Op::AddMultipliedTotal))
         }
@@ -606,64 +693,70 @@ fn effect_modifier(effect: &str, amplifier: i32, a: Attr) -> Option<(f64, Op)> {
         _ => None,
     }
 }
-/// The attribute modifiers of the mob's effects (`MobEffect.addAttributeModifier`),
-/// scaled by the amplifier plus one.
-fn effect_modifiers(m: &Mob, a: Attr) -> impl Iterator<Item = (f64, Op)> + '_ {
+/// The derived effect modifiers (`effect_modifier`) under their vanilla ids
+/// (`minecraft:effect.<name>`). One modifier per id: a derived row yields to
+/// an active row with the same id, which holds Java's single slot.
+fn effect_rows(m: &Mob, a: Attr) -> Vec<(String, f64, Op)> {
     m.extra
         .effects
         .iter()
-        .filter_map(move |&(effect, _, amplifier)| effect_modifier(effect, amplifier, a))
+        .filter_map(|&(effect, _, amplifier)| {
+            let name = effect.trim_start_matches("minecraft:");
+            let id = format!("minecraft:effect.{name}");
+            if has_modifier(m, a, &id) {
+                return None;
+            }
+            effect_modifier(effect, amplifier, a).map(|(amount, op)| (id, amount, op))
+        })
+        .collect()
 }
-/// `AttributeInstance.getValue`: the base, then the modifiers by operation.
+/// `AttributeInstance.getValue`.
 pub fn value(m: &Mob, a: Attr) -> f64 {
-    compute(m, a, true, &[])
+    compute(m, a, &[])
 }
-/// `value` with more modifiers, such as the ones worn equipment grants.
-pub fn value_with(m: &Mob, a: Attr, extra: &[(f64, Op)]) -> f64 {
-    compute(m, a, true, extra)
+/// `value` with the modifiers worn or held equipment grants, each under its
+/// own id (`LivingEntity.collectEquipmentChanges` ->
+/// `AttributeMap.addTransientAttributeModifiers`: removeModifier(id), then
+/// addTransientModifier).
+pub fn value_with(m: &Mob, a: Attr, extra: &[(&str, f64, Op)]) -> f64 {
+    compute(m, a, extra)
 }
-fn compute(m: &Mob, a: Attr, with_transient: bool, extra: &[(f64, Op)]) -> f64 {
-    let mut base = base_value(m, a);
-    let empty = Vec::new();
-    let mods = m.extra.attributes.as_ref().map_or(&empty, |s| &s.modifiers);
-    let mut ops: Vec<(f64, Op)> = mods
-        .iter()
-        .filter(|x| x.attr == a)
-        .map(|x| (x.amount, x.op))
-        .collect();
-    if with_transient {
-        ops.extend(transient(m, a));
-        ops.extend(effect_modifiers(m, a));
+/// `AttributeInstance.calculateValue` of the mob's persistent instance (its
+/// buckets in their exact fastutil slot order and history). The effects whose
+/// modifier is still derived (Slowness and the attack and health ones) and the
+/// equipment rows are applied to a copy of it as Java would hold them
+/// (addPermanentModifier when the effect was added; remove, then
+/// addTransientModifier for equipment); the copy keeps the instance's history,
+/// but those rows enter it at read time.
+fn compute(m: &Mob, a: Attr, extra: &[(&str, f64, Op)]) -> f64 {
+    let held = m.extra.attributes.as_ref().and_then(|s| s.instance(a));
+    let derived = effect_rows(m, a);
+    if derived.is_empty()
+        && extra.is_empty()
+        && let Some(i) = held
+    {
+        return i.compute_value();
     }
-    ops.extend(extra.iter().copied());
-    for (amount, op) in &ops {
-        if *op == Op::AddValue {
-            base += amount;
+    let mut scratch = held.cloned().unwrap_or_else(|| fresh_instance(m, a));
+    for (id, amount, op) in derived {
+        if let Ok(x) = world_attributes::Modifier::new(&id, amount, operation(op)) {
+            let _ = scratch.add_permanent(x, &mut Quiet);
         }
     }
-    let mut result = base;
-    for (amount, op) in &ops {
-        if *op == Op::AddMultipliedBase {
-            result += base * amount;
+    for &(id, amount, op) in extra {
+        if let Ok(x) = world_attributes::Modifier::new(id, amount, operation(op)) {
+            let _ = scratch.remove(x.id(), &mut Quiet);
+            let _ = scratch.add_transient(x, &mut Quiet);
         }
     }
-    for (amount, op) in &ops {
-        if *op == Op::AddMultipliedTotal {
-            result *= 1.0 + amount;
-        }
-    }
-    let (lo, hi) = a.range();
-    if result.is_nan() {
-        lo
-    } else {
-        result.clamp(lo, hi)
-    }
+    scratch.compute_value()
 }
 /// Copies the attribute values into the fields the game reads.
 fn refresh(m: &mut Mob, a: Attr) {
     match a {
         Attr::MaxHealth => m.attrs.max_health = value(m, a) as f32,
-        Attr::MovementSpeed => m.attrs.speed = base_with_modifiers(m, a),
+        // Movement reads the instance itself (`Mob::movement_speed`): no copy.
+        Attr::MovementSpeed => {}
         Attr::FollowRange => {
             m.attrs.follow_range = value(m, a);
             m.update_max_visited_nodes();
@@ -675,11 +768,6 @@ fn refresh(m: &mut Mob, a: Attr) {
         Attr::Armor | Attr::BurningTime | Attr::FlyingSpeed => {}
     }
 }
-/// The value without the transient baby modifier (`speed_bonus` applies
-/// that one to movement speed).
-fn base_with_modifiers(m: &Mob, a: Attr) -> f64 {
-    compute(m, a, false, &[])
-}
 /// `AttributeInstance.setBaseValue`.
 pub fn set_base(m: &mut Mob, a: Attr, v: f64) {
     let s = m.extra.attributes.get_or_insert_with(Box::default);
@@ -687,23 +775,36 @@ pub fn set_base(m: &mut Mob, a: Attr, v: f64) {
         Some(b) => b.1 = v,
         None => s.bases.push((a, v)),
     }
+    if let Some((_, i)) = s.instances.iter_mut().find(|(x, _)| *x == a) {
+        let _ = i.set_base_value(v, &mut Quiet);
+    }
     refresh(m, a);
 }
 pub fn has_modifier(m: &Mob, a: Attr, id: &str) -> bool {
     m.extra
         .attributes
         .as_ref()
-        .is_some_and(|s| s.modifiers.iter().any(|x| x.attr == a && x.id == id))
+        .and_then(|s| s.instance(a))
+        .is_some_and(|i| i.modifier(id).is_some())
 }
-/// The amount of a permanent modifier, if the mob has it.
+/// The active row with this id (`AttributeInstance.getModifier`).
+pub fn modifier(m: &Mob, a: Attr, id: &str) -> Option<Modifier> {
+    m.extra
+        .attributes
+        .as_ref()
+        .and_then(|s| s.active().find(|x| x.attr == a && x.id == id))
+}
+/// The amount of the active modifier with this id, if the mob has it.
 pub fn modifier_amount(m: &Mob, a: Attr, id: &str) -> Option<f64> {
     m.extra
         .attributes
         .as_ref()
-        .and_then(|s| s.modifiers.iter().find(|x| x.attr == a && x.id == id))
-        .map(|x| x.amount)
+        .and_then(|s| s.instance(a))
+        .and_then(|i| i.modifier(id))
+        .map(|x| x.amount())
 }
-/// `addOrReplacePermanentModifier`.
+/// `addOrReplacePermanentModifier`. An id that is no legal `Identifier` is
+/// ignored (the command and the load parse ids first).
 pub fn add_modifier(
     m: &mut Mob,
     a: Attr,
@@ -711,26 +812,101 @@ pub fn add_modifier(
     amount: f64,
     op: Op,
 ) {
-    let id = id.into();
-    let s = m.extra.attributes.get_or_insert_with(Box::default);
-    let new = Modifier {
-        attr: a,
-        id: id.clone(),
-        amount,
-        op,
+    let Ok(x) = world_attributes::Modifier::new(&id.into(), amount, operation(op)) else {
+        return;
     };
-    match s.modifiers.iter_mut().find(|x| x.attr == a && x.id == id) {
-        Some(x) => *x = new,
-        None => s.modifiers.push(new),
+    let _ = instance_mut(m, a).add_or_replace_permanent(x, &mut Quiet);
+    refresh(m, a);
+}
+/// `AttributeInstance.addTransientModifier`. Java throws when the id is
+/// already applied, so every caller first removes it or tests `has_modifier`,
+/// as its Java counterpart does.
+pub fn add_transient(m: &mut Mob, a: Attr, id: &'static str, amount: f64, op: Op) {
+    let Ok(x) = world_attributes::Modifier::new(id, amount, operation(op)) else {
+        return;
+    };
+    let added = instance_mut(m, a).add_transient(x, &mut Quiet);
+    debug_assert!(added.is_ok(), "{id} is already applied");
+    refresh(m, a);
+}
+/// `AttributeInstance.addOrUpdateTransientModifier`: the active row is
+/// replaced and the new one joins its operation's bucket; a row the same id
+/// held in another operation's bucket stays there, and a permanent one stays
+/// saved, exactly as Java (the world instance keeps that edge).
+pub fn add_or_update_transient(m: &mut Mob, a: Attr, id: &'static str, amount: f64, op: Op) {
+    let Ok(x) = world_attributes::Modifier::new(id, amount, operation(op)) else {
+        return;
+    };
+    let _ = instance_mut(m, a).add_or_update_transient(x, &mut Quiet);
+    refresh(m, a);
+}
+/// `AttributeInstance.removeModifier(id)`.
+pub fn remove_modifier(m: &mut Mob, a: Attr, id: &str) {
+    if let Some(s) = m.extra.attributes.as_mut()
+        && let Some((_, i)) = s.instances.iter_mut().find(|(x, _)| *x == a)
+    {
+        let _ = i.remove(id, &mut Quiet);
     }
     refresh(m, a);
 }
-/// `AttributeInstance.removeModifier`.
-pub fn remove_modifier(m: &mut Mob, a: Attr, id: &str) {
-    if let Some(s) = m.extra.attributes.as_mut() {
-        s.modifiers.retain(|x| x.attr != a || x.id != id);
-    }
+/// `AttributeInstance.apply` of the saved permanent rows (the load): each is
+/// put into the active map, its operation's bucket and the permanent map,
+/// over what is there (no removal first).
+pub fn apply_saved(m: &mut Mob, a: Attr, rows: &[(String, f64, Op)]) {
+    let modifiers: Vec<_> = rows
+        .iter()
+        .filter_map(|(id, amount, op)| {
+            world_attributes::Modifier::new(id, *amount, operation(*op)).ok()
+        })
+        .collect();
+    let i = instance_mut(m, a);
+    let packed = world_attributes::Packed {
+        base: i.base_value(),
+        modifiers,
+    };
+    let _ = i.apply(&packed, &mut Quiet);
     refresh(m, a);
+}
+/// The rows `AttributeInstance.pack` saves.
+pub fn saved_modifiers(s: &Attributes) -> impl Iterator<Item = Modifier> + '_ {
+    s.saved()
+}
+/// `LivingEntity.setSprinting`: removeModifier(minecraft:sprinting), then the
+/// transient SPEED_MODIFIER_SPRINTING (0.3F, ADD_MULTIPLIED_TOTAL) while
+/// sprinting. (Vanilla Cat and Ocelot sprint; no Horizon mob calls it yet.)
+pub fn set_sprinting(m: &mut Mob, sprinting: bool) {
+    m.extra.sprinting = sprinting;
+    remove_modifier(m, Attr::MovementSpeed, SPRINTING_ID);
+    if sprinting {
+        add_transient(
+            m,
+            Attr::MovementSpeed,
+            SPRINTING_ID,
+            f64::from(0.3f32),
+            Op::AddMultipliedTotal,
+        );
+    }
+}
+/// `MobEffect.addAttributeModifiers` / `removeAttributeModifiers` for the
+/// effects whose modifier is a stored row (Speed): `Some(amplifier)` when the
+/// effect is added or updated (`onEffectAdded`, `onEffectUpdated(_, true)`):
+/// removeModifier(id) then addPermanentModifier(create(amplifier));
+/// `None` when it ends (`onEffectsRemoved`). The other effects return.
+pub fn effect_attributes_changed(m: &mut Mob, effect: &str, amplifier: Option<i32>) {
+    if effect.trim_start_matches("minecraft:") != "speed" {
+        return;
+    }
+    match amplifier {
+        // MobEffects.SPEED: 0.2F per level; AttributeTemplate.create: amount * (amplifier + 1).
+        Some(amp) => add_modifier(
+            m,
+            Attr::MovementSpeed,
+            EFFECT_SPEED_ID,
+            f64::from(0.2f32) * f64::from(amp + 1),
+            Op::AddMultipliedTotal,
+        ),
+        None => remove_modifier(m, Attr::MovementSpeed, EFFECT_SPEED_ID),
+    }
 }
 /// `Mob.finalizeSpawn`, which every mob's own `finalizeSpawn` reaches
 /// through `super`: the `random_spawn_bonus` follow range modifier (once)
@@ -1025,12 +1201,16 @@ pub fn set_baby(m: &mut Mob, baby: bool) {
         _ if zombie(s) || s == Species::Piglin => {
             m.extra.age = if baby { NON_AGEABLE_BABY } else { 0 };
             // Zombie/Piglin.setBaby: removeModifier(minecraft:baby), then the
-            // transient one again for a baby.
-            if let Some(a) = m.extra.attributes.as_mut() {
-                a.baby_speed_removed = false;
-            }
-            if has_modifier(m, Attr::MovementSpeed, "minecraft:baby") {
-                remove_modifier(m, Attr::MovementSpeed, "minecraft:baby");
+            // transient SPEED_MODIFIER_BABY again for a baby.
+            remove_modifier(m, Attr::MovementSpeed, BABY_SPEED_ID);
+            if baby && let Some(amount) = baby_speed_amount(s) {
+                add_transient(
+                    m,
+                    Attr::MovementSpeed,
+                    BABY_SPEED_ID,
+                    amount,
+                    Op::AddMultipliedBase,
+                );
             }
         }
         Species::Zoglin => {
@@ -2449,6 +2629,9 @@ pub fn villager_type(biome: &str) -> u8 {
 }
 
 #[cfg(test)]
+#[path = "finalize_speed_tests.rs"]
+mod speed_tests;
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -2636,7 +2819,8 @@ mod tests {
             );
             let cached = |m: &crate::mobs::Mob| match a {
                 Attr::MaxHealth => Some(f64::from(m.attrs.max_health)),
-                Attr::MovementSpeed => Some(m.attrs.speed),
+                // Movement reads the instance (`value`): no cached copy.
+                Attr::MovementSpeed => None,
                 Attr::FollowRange => Some(m.attrs.follow_range),
                 Attr::AttackDamage => Some(f64::from(m.attrs.attack_damage)),
                 Attr::KnockbackResistance => Some(m.attrs.knockback_resistance),
@@ -2694,9 +2878,9 @@ mod tests {
             Op::AddMultipliedTotal,
         );
         assert_eq!(base_value(&m, Attr::MovementSpeed), 0.5);
-        assert_eq!(m.attrs.speed, 0.75);
+        assert_eq!(value(&m, Attr::MovementSpeed), 0.75);
         remove_modifier(&mut m, Attr::MovementSpeed, "test:x");
-        assert_eq!(m.attrs.speed, 0.5);
+        assert_eq!(value(&m, Attr::MovementSpeed), 0.5);
         assert_eq!(base_value(&m, Attr::AttackDamage), 7.0);
         assert_eq!(m.attrs.attack_damage, 7.0);
     }
@@ -2729,8 +2913,9 @@ mod tests {
         // The effects that already worked keep their vanilla amounts.
         let (amount, _) = modifier("strength", 0, Attr::AttackDamage);
         assert!(close(amount, 3.0));
-        let (amount, _) = modifier("speed", 0, Attr::MovementSpeed);
-        assert!(close(amount, f64::from(0.2f32)));
+        // #13783: Speed's modifier is a stored row (`effect_attributes_changed`),
+        // never derived from the effect list.
+        assert!(effect_modifier("speed", 0, Attr::MovementSpeed).is_none());
         // An effect does not touch attributes it does not modify.
         assert!(effect_modifier("weakness", 0, Attr::MovementSpeed).is_none());
         assert!(effect_modifier("poison", 0, Attr::AttackDamage).is_none());
