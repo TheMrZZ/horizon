@@ -79,6 +79,7 @@ impl Game<'_> {
             return;
         }
         rows[index] = self.inventory[..hotbar::SIZE].to_vec();
+        horizon_items::saved_stack::capture_slots(&mut rows[index], self.items());
         if let Err(e) = hotbar::save(&path, &rows) {
             // saveHotbar sets the message inside its try, so a failed save says nothing.
             log::warn!("the creative hotbar was not saved: {e}");

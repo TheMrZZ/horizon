@@ -252,6 +252,13 @@ impl Contents {
         Some((width, color))
     }
 
+    pub fn store_with_items(mut self, bundle: &mut ItemStack, items: &Items) {
+        for stack in &mut self.items {
+            *stack = crate::saved_stack::capture(stack, items);
+        }
+        self.store(bundle);
+    }
+
     /// `toImmutable`, written back into the bundle's component.
     pub fn store(self, bundle: &mut ItemStack) {
         let data = bundle.data_mut();

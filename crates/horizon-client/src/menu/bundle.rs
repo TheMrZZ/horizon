@@ -55,7 +55,7 @@ impl Menu {
             _ => return false,
         }
         if let Some(carried) = self.carried.as_mut() {
-            contents.store(carried);
+            contents.store_with_items(carried, env.items);
         }
         true
     }
@@ -97,7 +97,7 @@ impl Menu {
             }
         }
         // `self.set(BUNDLE_CONTENTS, ...)` changes the slot's stack in place.
-        contents.store(&mut bundle);
+        contents.store_with_items(&mut bundle, env.items);
         let slot = self.slots[s];
         self.containers[slot.container][slot.index] = Some(bundle);
         true

@@ -552,7 +552,7 @@ impl Game<'_> {
                     return false;
                 };
                 *slot = stack;
-                component.store(&mut outer, slots);
+                component.store_with_items(&mut outer, slots, self.items());
                 self.slot_set(parent, Some(outer))
             }
             Slot::Guest(conn, slot) => self

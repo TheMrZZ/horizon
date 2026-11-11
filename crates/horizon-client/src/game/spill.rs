@@ -47,6 +47,7 @@ impl Pending {
         entity: &BlockEntity,
         block: &str,
         name: Option<Tag>,
+        catalog: &horizon_client::items::Items,
     ) {
         if let BlockEntity::Banner(banner) = entity {
             self.banner.insert(pos, banner.clone());
@@ -91,7 +92,12 @@ impl Pending {
             let kept = items
                 .iter()
                 .enumerate()
-                .filter_map(|(i, s)| Some((i as u8, s.clone()?)))
+                .filter_map(|(i, s)| {
+                    Some((
+                        i as u8,
+                        horizon_items::saved_stack::capture(s.as_ref()?, catalog),
+                    ))
+                })
                 .collect();
             self.shulker.insert(pos, kept);
         }
@@ -464,7 +470,7 @@ impl GameLevel<'_> {
             let entity = entity.clone();
             let name = self.world.block_names.get(&key).cloned();
             let block = self.facts.get(state).name.clone();
-            self.pending.record(at, &entity, &block, name);
+            self.pending.record(at, &entity, &block, name, self.items);
         } else if let Some(tag) = saved_entity(self.world, [pos.x, pos.y, pos.z]) {
             self.pending.record_saved(at, &tag);
         }
@@ -899,7 +905,13 @@ mod tests {
             };
             assert_eq!(banner.layers.len(), item_data::OMINOUS_LAYERS.len());
             let mut pending = Pending::default();
-            pending.record([pos.0, pos.1, pos.2], &loaded, block, None);
+            pending.record(
+                [pos.0, pos.1, pos.2],
+                &loaded,
+                block,
+                None,
+                &horizon_client::items::Items::for_tests(Default::default()),
+            );
             let mut dropped = ItemStack::new("minecraft:white_banner", 1);
             pending.attach([pos.0, pos.1, pos.2], &mut dropped);
             assert!(dropped.data().unwrap().ominous_banner);

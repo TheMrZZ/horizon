@@ -395,7 +395,7 @@ impl Game<'_> {
             advancements,
             stats,
         };
-        match arrivals::export_record(&mut host.hub, i, freeze, records) {
+        match arrivals::export_record_with_items(&mut host.hub, i, freeze, records, self.items()) {
             Ok(record) => arrivals::export_reply(&host.hub, i, record),
             Err(e) => json!({ "error": e }),
         }

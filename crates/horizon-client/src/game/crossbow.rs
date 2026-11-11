@@ -203,7 +203,9 @@ impl Game<'_> {
         let mut projectile = Some(Self::mob_vanilla_ammo(&shooter.extra, weapon));
         self.native_living_get_projectile(None, "", Some(mob), &kind, weapon, &mut projectile);
         // A crossbow takes arrows and firework rockets only.
-        let projectile = projectile.filter(|ammo| is_arrow(ammo) || &*ammo.item == FIREWORK_ROCKET);
+        let projectile = projectile
+            .filter(|ammo| is_arrow(ammo) || &*ammo.item == FIREWORK_ROCKET)
+            .map(|ammo| horizon_items::saved_stack::capture(&ammo, self.items()));
         let Some(shooter) = self.mobs.iter_mut().find(|m| m.id == mob) else {
             return false;
         };
@@ -280,7 +282,12 @@ impl Game<'_> {
             let ammo = ammo.stack;
             // useAmmo: the extra multishot arrows and creative's are intangible.
             let drawn = (0..shots)
-                .map(|i| horizon_client::arrows::drawn_ammo(&ammo, self.creative || i > 0))
+                .map(|i| {
+                    horizon_items::saved_stack::capture(
+                        &horizon_client::arrows::drawn_ammo(&ammo, self.creative || i > 0),
+                        self.items(),
+                    )
+                })
                 .collect();
             if let Some(bow) = self.stack_in_mut(slot).as_mut() {
                 bow.data_mut().charged = drawn;

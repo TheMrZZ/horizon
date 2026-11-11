@@ -97,7 +97,12 @@ impl Game<'_> {
         let maps = self.level_maps(grid.iter().flatten());
         let found = self
             .recipes()
-            .find_with(&grid, 3, &|id| maps.state(id).map(|(_, scale)| scale))
+            .find_with_items(
+                &grid,
+                3,
+                &|id| maps.state(id).map(|(_, scale)| scale),
+                self.items(),
+            )
             .map(|(name, result)| (name.to_owned(), result))
             .filter(|(_, result)| result.count > 0);
         let Some((recipe, mut result)) = found else {
@@ -216,7 +221,9 @@ impl Game<'_> {
     pub(in crate::game) fn crafter_result(&self) -> Option<ItemStack> {
         let key = self.container?;
         let c = self.crafter_at(key)?;
-        self.recipes().craft(&c.items, 3)
+        self.recipes()
+            .find_with_items(&c.items, 3, &|_| None, self.items())
+            .map(|(_, stack)| stack)
     }
     fn crafter_open(&self) -> bool {
         matches!(self.container_kind(), Some(BlockEntity::Crafter(_)))

@@ -56,6 +56,16 @@ impl Component {
             Self::Charged => data.charged.iter().cloned().map(Some).collect(),
         }
     }
+    pub(super) fn store_with_items(
+        self,
+        stack: &mut ItemStack,
+        mut slots: Vec<Option<ItemStack>>,
+        items: &horizon_client::items::Items,
+    ) {
+        horizon_items::saved_stack::capture_slots(&mut slots, items);
+        self.store(stack, slots);
+    }
+
     /// ComponentSlotCollection writes a single normalized component back to
     /// its live parent; all unrelated parent components remain modeled.
     pub(super) fn store(self, stack: &mut ItemStack, mut slots: Vec<Option<ItemStack>>) {
@@ -199,7 +209,7 @@ impl Game<'_> {
                 changed += 1;
             }
         }
-        component.store(&mut stack, slots);
+        component.store_with_items(&mut stack, slots, self.items());
         if self.slot_set(parent, Some(stack)) {
             changed
         } else {
@@ -257,7 +267,7 @@ impl Game<'_> {
         if original.is_none() {
             return changed;
         }
-        component.store(&mut stack, slots);
+        component.store_with_items(&mut stack, slots, self.items());
         if self.slot_set(parent, Some(stack)) {
             changed
         } else {

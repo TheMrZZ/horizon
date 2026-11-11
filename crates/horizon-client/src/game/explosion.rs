@@ -1130,7 +1130,15 @@ impl Game<'_> {
         }
         if let Some(entity) = self.world.block_entities.get(&key).cloned() {
             let custom = self.world.block_names.get(&key).cloned();
-            self.pending.record(pos, &entity, &name, custom);
+            self.pending.record(
+                pos,
+                &entity,
+                &name,
+                custom,
+                self.world_tables
+                    .as_ref()
+                    .map_or(self.res.items(), |tables| &tables.items),
+            );
         } else if let Some(tag) = super::spill::saved_entity(&self.world, pos) {
             self.pending.record_saved(pos, &tag);
         }

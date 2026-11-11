@@ -443,65 +443,6 @@ pub struct Records {
     pub stats: serde_json::Value,
 }
 
-/// The record of the player at guest index `i` (which [`check_exportable`] gave,
-/// with its menus closed and its attachments in place): the player compound as
-/// the server saves it, as the uncompressed NBT of the compound in base64, its
-/// advancements and statistics, and the few values a proxy reads without opening
-/// it. With `freeze`, a hand-over starts: the record gets an id, the player's
-/// own inputs stop being acted on until the hand-over ends, and every later
-/// export answers with this same record. A player already frozen is answered
-/// with its hand-over's record, whatever `freeze` says.
-pub fn export_record(
-    hub: &mut Hub,
-    i: usize,
-    freeze: bool,
-    records: Records,
-) -> Result<serde_json::Value, String> {
-    use horizon_world::nbt::{Limits, NamedTag, write_named};
-    if let Some(h) = &hub.guests[i].handover {
-        return Ok(h.record.clone());
-    }
-    let id = freeze.then(new_handover_id).transpose()?;
-    let g = &hub.guests[i];
-    let tag = super::playerdata::player_tag(g);
-    let bytes = write_named(
-        &NamedTag {
-            name: "".into(),
-            tag,
-        },
-        Limits::saved(),
-    )
-    .map_err(|e| e.to_string())?;
-    let velocity = g
-        .motion
-        .as_ref()
-        .map_or([0.0; 3], |m| [m.velocity.x, m.velocity.y, m.velocity.z]);
-    let record = serde_json::json!({
-        "version": RECORD_VERSION,
-        "data_version": horizon_world::DATA_VERSION,
-        "handover": id.map(handover_text),
-        "uuid": horizon_protocol::crypto::uuid_string(g.uuid),
-        "name": g.name,
-        "dimension": g.dimension,
-        "position": g.position,
-        "rotation": [g.yaw, g.pitch],
-        "velocity": velocity,
-        "game_mode": g.game_mode,
-        "player": super::base64(&bytes),
-        "advancements": records.advancements,
-        "stats": records.stats,
-    });
-    if let Some(id) = id {
-        let since = hub.ticks;
-        hub.guests[i].handover = Some(Handover {
-            id,
-            since,
-            record: record.clone(),
-        });
-    }
-    Ok(record)
-}
-
 /// The reply to an export: the record and, while the player is frozen, the ticks left
 /// before its hand-over ends by itself (`freeze_ticks_left`), so that a proxy does not
 /// commit on the target so late that its `moved` would come after the end. The count is
@@ -1763,6 +1704,46 @@ mod hub_tests {
         assert_eq!(number(first.get("count")), Some(5));
     }
 
+    #[test]
+    fn catalog_export_captures_actual_player_patch_without_mutating_source() {
+        use crate::items::Items;
+        use horizon_world::{loot::PackOverlay, nbt::Tag};
+        let root = std::env::temp_dir().join(format!("h088-export-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("data/minecraft/loot_table")).unwrap();
+        std::fs::write(
+            root.join("items.json"),
+            r#"{"minecraft:stone":{"minecraft:max_stack_size":64}}"#,
+        )
+        .unwrap();
+        let items = Items::catalog(&root, &PackOverlay::NONE).unwrap();
+        let (mut hub, i) = exported_guest();
+        hub.guests[i].inventory[0]
+            .as_mut()
+            .unwrap()
+            .data_mut()
+            .set_other("minecraft:max_stack_size", Some(Tag::Int(64)));
+        let before = hub.guests[i].inventory[0].clone();
+        let uuid = hub.guests[i].uuid;
+        let ticks = hub.ticks;
+        let record =
+            super::export_record_with_items(&mut hub, i, false, Default::default(), &items)
+                .unwrap();
+        let tag = compound_of(&record);
+        assert_eq!(
+            tag.get("UUID"),
+            Some(&crate::save::uuid_tag(super::super::playerdata::uuid_ints(
+                uuid
+            )))
+        );
+        let Tag::List(stacks) = tag.get("Inventory").unwrap() else {
+            panic!("Inventory")
+        };
+        assert_eq!(stacks[0].get("count"), Some(&Tag::Int(5)));
+        assert!(stacks[0].get("components").is_none());
+        assert_eq!(hub.guests[i].inventory[0], before);
+        assert_eq!(hub.ticks, ticks);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     /// A frozen player's inputs are not acted on, its acknowledgements are, and a freeze
     /// nobody finishes is let go.
     #[test]
@@ -3458,3 +3439,6 @@ mod hub_tests {
 
     // ---- the view follows the imported position ------------------------------
 }
+
+mod stack_export;
+pub use stack_export::{export_record, export_record_with_items};

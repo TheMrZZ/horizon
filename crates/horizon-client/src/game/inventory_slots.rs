@@ -352,7 +352,7 @@ impl Game<'_> {
         let scale = |id: i32| self.maps.data.get(&id).map(|m| m.scale);
         // The world's table, the one taking the result (`menu_click`) crafts from.
         self.recipes()
-            .find_with(&grid, n, &scale)
+            .find_with_items(&grid, n, &scale, self.items())
             .map(|(name, result)| (name.to_owned(), result))
     }
     pub(super) fn draw_inventory_slots(&mut self, batch: &mut HudBatch, ox: f32, oy: f32) {

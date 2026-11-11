@@ -5035,7 +5035,8 @@ impl Game<'_> {
         };
         if let Some(entity) = self.world.block_entities.get(&key).cloned() {
             let name = self.world.block_names.get(&key).cloned();
-            self.pending.record(pos, &entity, &facts.name, name);
+            self.pending
+                .record(pos, &entity, &facts.name, name, world_items!(self));
         } else if let Some(tag) = spill::saved_entity(&self.world, pos) {
             self.pending.record_saved(pos, &tag);
         }

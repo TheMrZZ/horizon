@@ -675,6 +675,7 @@ struct Facts {
 /// The tables recipes consult.
 pub struct Context<'a> {
     recipes: &'a Recipes,
+    items: Option<&'a Items>,
     /// A filled map's scale, when its data is known.
     pub map_scale: &'a dyn Fn(i32) -> Option<u8>,
 }
@@ -1211,7 +1212,10 @@ impl Special {
                 let side = |x, y| {
                     input.get(x, y).map(|s| ItemStack {
                         count: 1,
-                        ..s.clone()
+                        ..ctx.items.map_or_else(
+                            || s.clone(),
+                            |items| horizon_items::saved_stack::capture(s, items),
+                        )
                     })
                 };
                 let mut out = result.create();
@@ -1795,9 +1799,29 @@ impl Recipes {
         size: usize,
         map_scale: &dyn Fn(i32) -> Option<u8>,
     ) -> Option<(&str, ItemStack)> {
+        self.find_with_catalog(grid, size, map_scale, None)
+    }
+    pub fn find_with_items(
+        &self,
+        grid: &[Option<ItemStack>],
+        size: usize,
+        map_scale: &dyn Fn(i32) -> Option<u8>,
+        items: &Items,
+    ) -> Option<(&str, ItemStack)> {
+        self.find_with_catalog(grid, size, map_scale, Some(items))
+            .map(|(id, stack)| (id, horizon_items::saved_stack::capture(&stack, items)))
+    }
+    fn find_with_catalog(
+        &self,
+        grid: &[Option<ItemStack>],
+        size: usize,
+        map_scale: &dyn Fn(i32) -> Option<u8>,
+        catalog: Option<&Items>,
+    ) -> Option<(&str, ItemStack)> {
         let input = Input::of(grid, size)?;
         let ctx = Context {
             recipes: self,
+            items: catalog,
             map_scale,
         };
         for (name, recipe) in &self.crafting {
@@ -1862,6 +1886,7 @@ impl Recipes {
         };
         let ctx = Context {
             recipes: self,
+            items: None,
             map_scale: &|_| None,
         };
         Self::assemble_if_matches(&ctx, &input, recipe).is_some()
@@ -2628,6 +2653,7 @@ mod tests {
         };
         let ctx = Context {
             recipes: &recipes,
+            items: None,
             map_scale: &|_| None,
         };
         let mut grid: Vec<Option<ItemStack>> = cells.iter().cloned().map(Some).collect();
