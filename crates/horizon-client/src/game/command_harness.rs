@@ -328,7 +328,7 @@ impl Game<'_> {
                             .ok_or("projectile type: missing model")?;
                         // Read the live save adapter's type, not the generic selector alias.
                         // No Duration value is supplied by this admission observation.
-                        let saved = horizon_client::entity_nbt::arrow_to_nbt(p, actual, None, None, None)
+                        let saved = horizon_client::entity_nbt::arrow_to_nbt_with_items(p, actual, None, None, None, g.items())
                             .ok_or("projectile type: not an actual arrow")?;
                         Ok(json!({"uuid":actual,"kind":horizon_client::entity_nbt::kind(&saved)
                             .ok_or("projectile type: missing saved type")?,

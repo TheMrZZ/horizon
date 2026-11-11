@@ -47,6 +47,23 @@ pub fn painting_from_nbt(tag: &Tag) -> Option<([i32; 3], u8, Option<String>)> {
 }
 /// ItemFrame.addAdditionalSaveData.
 pub fn item_frame_to_nbt(f: &ItemFrame, uuid: [i32; 4], raw: Option<&Tag>) -> Tag {
+    item_frame_to_nbt_saved(f, uuid, raw, None)
+}
+pub fn item_frame_to_nbt_with_items(
+    f: &ItemFrame,
+    uuid: [i32; 4],
+    raw: Option<&Tag>,
+    catalog: &crate::items::Items,
+) -> Tag {
+    item_frame_to_nbt_saved(f, uuid, raw, Some(catalog))
+}
+fn item_frame_to_nbt_saved(
+    f: &ItemFrame,
+    uuid: [i32; 4],
+    raw: Option<&Tag>,
+    catalog: Option<&crate::items::Items>,
+) -> Tag {
+    let saved = super::saved_stacks::SavedStacks(catalog);
     let (lo, hi) = f.bounds();
     let base = Base {
         id: f.kind(),
@@ -82,7 +99,7 @@ pub fn item_frame_to_nbt(f: &ItemFrame, uuid: [i32; 4], raw: Option<&Tag>) -> Ta
         map.remove(&horizon_world::nbt::JavaString::from("Item"));
     }
     if let Some(item) = &f.item {
-        put(&mut tag, "Item", item_to_nbt(item));
+        put(&mut tag, "Item", saved.stack(item));
     }
     tag
 }

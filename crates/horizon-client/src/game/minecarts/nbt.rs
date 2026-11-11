@@ -8,6 +8,22 @@ impl Minecart {
         uuid: [i32; 4],
         raw: Option<&horizon_world::nbt::Tag>,
     ) -> horizon_world::nbt::Tag {
+        self.to_nbt_saved(uuid, raw, None)
+    }
+    pub fn to_nbt_with_items(
+        &self,
+        uuid: [i32; 4],
+        raw: Option<&horizon_world::nbt::Tag>,
+        catalog: &horizon_client::items::Items,
+    ) -> horizon_world::nbt::Tag {
+        self.to_nbt_saved(uuid, raw, Some(catalog))
+    }
+    fn to_nbt_saved(
+        &self,
+        uuid: [i32; 4],
+        raw: Option<&horizon_world::nbt::Tag>,
+        catalog: Option<&horizon_client::items::Items>,
+    ) -> horizon_world::nbt::Tag {
         use horizon_world::nbt::{JavaString, Tag};
         let mut tag = horizon_client::entity_nbt::vehicle_to_nbt(
             self.kind.id(),
@@ -51,7 +67,11 @@ impl Minecart {
             }
             match self.kind {
                 CartKind::Chest | CartKind::Hopper => {
-                    put("Items", horizon_client::save::encode_items(&self.items));
+                    let mut items = self.items.clone();
+                    if let Some(catalog) = catalog {
+                        horizon_items::saved_stack::capture_slots(&mut items, catalog);
+                    }
+                    put("Items", horizon_client::save::encode_items(&items));
                     if self.kind == CartKind::Hopper {
                         put("Enabled", Tag::Byte(i8::from(self.enabled)));
                     }
@@ -84,7 +104,13 @@ impl Minecart {
             }
             // A loaded loot table goes back while the items are still its roll;
             // otherwise the items replace it, as vanilla's unpackLootTable does.
-            if self.loot.as_ref().is_some_and(|l| l.restore(map)) {
+            let mut saved_loot = self.loot.clone();
+            if let Some(roll) = &mut saved_loot
+                && let Some(catalog) = catalog
+            {
+                horizon_client::saved_stacks::capture_rolled_loot(roll, catalog);
+            }
+            if saved_loot.as_ref().is_some_and(|l| l.restore(map)) {
                 if let Some(table) = horizon_client::save::text(map.get(&"LootTable".into()))
                     .and_then(|id| horizon_client_core::identifier::normalize_id(&id))
                 {

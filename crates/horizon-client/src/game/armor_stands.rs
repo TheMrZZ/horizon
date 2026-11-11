@@ -482,7 +482,12 @@ impl Game<'_> {
         // `EntityType.createDefaultStackConfig`: the item's `custom_data`, then its
         // `entity_data` merged over the stand; `ArmorStandItem.useOn` then snaps it
         // to the placement yaw with pitch 0.
-        let own = horizon_client::entity_nbt::armor_stand_to_nbt(&stand, [0; 4], None);
+        let own = horizon_client::entity_nbt::armor_stand_to_nbt_with_items(
+            &stand,
+            [0; 4],
+            None,
+            self.items(),
+        );
         let mut raw = horizon_client::block_entity_item::stack_configured_entity(
             stack,
             "minecraft:armor_stand",

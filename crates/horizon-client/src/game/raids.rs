@@ -1567,12 +1567,13 @@ impl Game<'_> {
                 .get(&m.id)
                 .copied()
                 .ok_or("raid observation: actor UUID is not registered")?;
-            let tag = horizon_client::entity_nbt::mob_to_nbt(
+            let tag = horizon_client::entity_nbt::mob_to_nbt_with_items(
                 m,
                 uuid,
                 self.persist.raw.get(&m.id),
                 Some(self.pack.assets.registry),
                 |other| self.persist.uuid_of(other),
+                self.items(),
             );
             Ok(json!({"uuid":uuid,"type":m.kind.id,"health":m.health,
                 "pos":[m.position.x,m.position.y,m.position.z],"noai":m.no_ai,

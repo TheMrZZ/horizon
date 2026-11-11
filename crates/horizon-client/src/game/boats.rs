@@ -248,6 +248,26 @@ impl Boat {
     /// `Entity.saveWithoutId` with `AbstractChestBoat`'s items: the loaded
     /// compound `raw` under the live fields.
     pub(super) fn to_nbt(&self, uuid: [i32; 4], raw: Option<&Tag>) -> Tag {
+        self.to_nbt_saved(uuid, raw, None)
+    }
+    pub(super) fn to_nbt_with_items(
+        &self,
+        uuid: [i32; 4],
+        raw: Option<&Tag>,
+        catalog: &horizon_client::items::Items,
+    ) -> Tag {
+        self.to_nbt_saved(uuid, raw, Some(catalog))
+    }
+    fn to_nbt_saved(
+        &self,
+        uuid: [i32; 4],
+        raw: Option<&Tag>,
+        catalog: Option<&horizon_client::items::Items>,
+    ) -> Tag {
+        let mut stacks = self.items.clone();
+        if let Some(catalog) = catalog {
+            horizon_items::saved_stack::capture_slots(&mut stacks, catalog);
+        }
         let mut tag = horizon_client::entity_nbt::boat_to_nbt(
             &self.entity_type(),
             self.position,
@@ -256,7 +276,7 @@ impl Boat {
             (self.on_ground, self.fall_distance),
             uuid,
             raw,
-            self.chest.then_some(&self.items[..]),
+            self.chest.then_some(&stacks[..]),
         );
         horizon_client::entity_nbt::write_saved_flags(&mut tag, self.on_ground, self.no_gravity);
         if let Tag::Compound(map) = &mut tag {

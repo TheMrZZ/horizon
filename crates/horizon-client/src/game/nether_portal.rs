@@ -1046,8 +1046,12 @@ impl Game<'_> {
                 return;
             }
             let uuid = self.uuid_for(id);
-            let tag =
-                self.tridents[i].to_nbt(uuid, self.pack.assets.registry, self.persist_raw(id));
+            let tag = self.tridents[i].to_nbt_with_items(
+                uuid,
+                self.pack.assets.registry,
+                self.persist_raw(id),
+                self.items(),
+            );
             self.tridents.remove(i);
             self.forget_entity(id);
             self.portals.arrivals.push(Arrival { plan, tag });
@@ -1058,7 +1062,12 @@ impl Game<'_> {
                 return;
             }
             let uuid = self.uuid_for(id);
-            let tag = self.rockets[i].to_nbt(uuid, self.level.player_uuid, self.persist_raw(id));
+            let tag = self.rockets[i].to_nbt_with_items(
+                uuid,
+                self.level.player_uuid,
+                self.persist_raw(id),
+                self.items(),
+            );
             self.rockets.remove(i);
             self.forget_entity(id);
             self.portals.arrivals.push(Arrival { plan, tag });
@@ -1103,7 +1112,7 @@ impl Game<'_> {
             self.release_vehicle_container(id);
             let uuid = self.uuid_for(id);
             let b = &self.boats[i];
-            let mut tag = b.to_nbt(uuid, self.persist_raw(id));
+            let mut tag = b.to_nbt_with_items(uuid, self.persist_raw(id), self.items());
             // The mobs riding it cross with it and mount it again.
             self.put_mob_passengers(&mut tag, id);
             for rider in self.remove_mob_riders(id) {
@@ -1125,7 +1134,7 @@ impl Game<'_> {
             }
             self.release_vehicle_container(id);
             let uuid = self.uuid_for(id);
-            let mut tag = self.carts[i].to_nbt(uuid, self.persist_raw(id));
+            let mut tag = self.carts[i].to_nbt_with_items(uuid, self.persist_raw(id), self.items());
             // `PositionMoveRotation.of(this)` takes the cart's `getKnownMovement`:
             // `OldMinecartBehavior` clamps it to 0.4 either way along x and z.
             let m = horizon_client::entity_nbt::motion(&tag);
@@ -1164,15 +1173,32 @@ impl Game<'_> {
                 .and_then(|a| a.last_state)
                 .map(|s| self.state_to_nbt(s));
             let raw = self.persist_raw(id);
-            let Some(tag) =
-                horizon_client::entity_nbt::arrow_to_nbt(p, uuid, p.owner_uuid, in_block, raw)
-                    .or_else(|| {
-                        horizon_client::entity_nbt::fireball_to_nbt(p, uuid, p.owner_uuid, raw)
-                    })
-                    .or_else(|| {
-                        horizon_client::entity_nbt::throwable_to_nbt(p, uuid, p.owner_uuid, raw)
-                    })
-            else {
+            let Some(tag) = horizon_client::entity_nbt::arrow_to_nbt_with_items(
+                p,
+                uuid,
+                p.owner_uuid,
+                in_block,
+                raw,
+                self.items(),
+            )
+            .or_else(|| {
+                horizon_client::entity_nbt::fireball_to_nbt_with_items(
+                    p,
+                    uuid,
+                    p.owner_uuid,
+                    raw,
+                    self.items(),
+                )
+            })
+            .or_else(|| {
+                horizon_client::entity_nbt::throwable_to_nbt_with_items(
+                    p,
+                    uuid,
+                    p.owner_uuid,
+                    raw,
+                    self.items(),
+                )
+            }) else {
                 return;
             };
             self.creatures.projectiles.remove(i);

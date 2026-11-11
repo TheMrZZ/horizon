@@ -128,12 +128,22 @@ impl Game<'_> {
             Target::Stand(id) => {
                 let uuid = self.uuid_for(id);
                 let a = self.armor_stands.iter().find(|a| a.id == id)?;
-                entity_nbt::armor_stand_to_nbt(a, uuid, self.persist.raw.get(&id))
+                entity_nbt::armor_stand_to_nbt_with_items(
+                    a,
+                    uuid,
+                    self.persist.raw.get(&id),
+                    self.items(),
+                )
             }
             Target::Frame(id) => {
                 let uuid = self.uuid_for(id);
                 let f = self.item_frames.iter().find(|f| f.id == id)?;
-                entity_nbt::item_frame_to_nbt(f, uuid, self.persist.raw.get(&id))
+                entity_nbt::item_frame_to_nbt_with_items(
+                    f,
+                    uuid,
+                    self.persist.raw.get(&id),
+                    self.items(),
+                )
             }
             Target::Painting(id) => {
                 let uuid = self.uuid_for(id);
@@ -144,7 +154,7 @@ impl Game<'_> {
                 let uuid = self.uuid_for(id);
                 let i = self.boats.iter().position(|b| b.id == id)?;
                 let b = &self.boats[i];
-                let mut tag = b.to_nbt(uuid, self.persist.raw.get(&id));
+                let mut tag = b.to_nbt_with_items(uuid, self.persist.raw.get(&id), self.items());
                 // Entity.saveWithoutId: the actual runtime passenger tree.
                 self.put_mob_passengers(&mut tag, id);
                 // AbstractBoat.addAdditionalSaveData: the live or pending leash.
@@ -154,7 +164,7 @@ impl Game<'_> {
             Target::Cart(id) => {
                 let uuid = self.uuid_for(id);
                 let c = self.carts.iter().find(|c| c.id == id)?;
-                let mut tag = c.to_nbt(uuid, self.persist.raw.get(&id));
+                let mut tag = c.to_nbt_with_items(uuid, self.persist.raw.get(&id), self.items());
                 self.put_mob_passengers(&mut tag, id);
                 tag
             }
@@ -204,13 +214,21 @@ impl Game<'_> {
                 let raw = self.persist.raw.get(&id);
                 // Projectile.addAdditionalSaveData stores the retained EntityReference,
                 // including an owner that is not currently resolved to a live entity.
-                let mut tag =
-                    entity_nbt::arrow_to_nbt(p, uuid, p.owner_uuid.or(owner), in_block, raw)
-                        .or_else(|| entity_nbt::fireball_to_nbt(p, uuid, owner, raw))
-                        .or_else(|| entity_nbt::throwable_to_nbt(p, uuid, owner, raw))
-                        .or_else(|| {
-                            entity_nbt::spit_or_bullet_to_nbt(p, uuid, owner, target, raw)
-                        })?;
+                let mut tag = entity_nbt::arrow_to_nbt_with_items(
+                    p,
+                    uuid,
+                    p.owner_uuid.or(owner),
+                    in_block,
+                    raw,
+                    self.items(),
+                )
+                .or_else(|| {
+                    entity_nbt::fireball_to_nbt_with_items(p, uuid, owner, raw, self.items())
+                })
+                .or_else(|| {
+                    entity_nbt::throwable_to_nbt_with_items(p, uuid, owner, raw, self.items())
+                })
+                .or_else(|| entity_nbt::spit_or_bullet_to_nbt(p, uuid, owner, target, raw))?;
                 self.save_projectile_portal_cooldown(p, &mut tag);
                 tag
             }
@@ -260,7 +278,7 @@ impl Game<'_> {
             Target::Rocket(id) => {
                 let uuid = self.uuid_for(id);
                 let r = self.rockets.iter().find(|r| r.id == id)?;
-                r.to_nbt(uuid, player_uuid, self.persist.raw.get(&id))
+                r.to_nbt_with_items(uuid, player_uuid, self.persist.raw.get(&id), self.items())
             }
             Target::Cloud(id) => {
                 let uuid = self.uuid_for(id);
@@ -325,17 +343,23 @@ impl Game<'_> {
             Target::Trident(id) => {
                 let uuid = self.uuid_for(id);
                 let t = self.tridents.iter().find(|t| t.id == id)?;
-                t.to_nbt(uuid, self.pack.assets.registry, self.persist.raw.get(&id))
+                t.to_nbt_with_items(
+                    uuid,
+                    self.pack.assets.registry,
+                    self.persist.raw.get(&id),
+                    self.items(),
+                )
             }
             Target::Spawner(id) => {
                 let s = self.ominous_spawners.iter().find(|s| s.id == id)?;
                 let [x, y, z] = s.position;
-                entity_nbt::ominous_item_spawner_to_nbt(
+                entity_nbt::ominous_item_spawner_to_nbt_with_items(
                     &s.item,
                     horizon_core::geometry::Vec3::new(x, y, z),
                     s.spawn_item_after,
                     s.uuid,
                     s.raw.as_deref(),
+                    self.items(),
                 )
             }
             // LeashFenceKnotEntity saves nothing of its own: the common

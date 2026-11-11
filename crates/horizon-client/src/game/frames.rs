@@ -190,7 +190,12 @@ impl Game<'_> {
         // `entity_data` merged over the frame (`TypedEntityData.loadInto`), before
         // `survives` runs on the configured frame.
         let kind = frame.kind();
-        let own = horizon_client::entity_nbt::item_frame_to_nbt(&frame, [0; 4], None);
+        let own = horizon_client::entity_nbt::item_frame_to_nbt_with_items(
+            &frame,
+            [0; 4],
+            None,
+            self.items(),
+        );
         let configured =
             horizon_client::block_entity_item::stack_configured_entity(stack, kind, &own);
         if let Some(mut loaded) =

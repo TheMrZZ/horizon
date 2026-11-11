@@ -97,6 +97,22 @@ impl Rocket {
         }
     }
     /// `FireworkRocketEntity.addAdditionalSaveData`; the owner only when it is `player`.
+    pub(super) fn to_nbt_with_items(
+        &self,
+        uuid: [i32; 4],
+        player: Option<[i32; 4]>,
+        raw: Option<&horizon_world::nbt::Tag>,
+        catalog: &horizon_client::items::Items,
+    ) -> horizon_world::nbt::Tag {
+        let mut saved = self.to_nbt(uuid, player, raw);
+        if let horizon_world::nbt::Tag::Compound(fields) = &mut saved {
+            fields.insert(
+                "FireworksItem".into(),
+                horizon_items::item_nbt::item_to_nbt_with_items(&self.item, catalog),
+            );
+        }
+        saved
+    }
     pub(super) fn to_nbt(
         &self,
         uuid: [i32; 4],

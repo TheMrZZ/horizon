@@ -101,10 +101,11 @@ fn frame_adoption(glow_first: bool) {
                 .find(|f| f.id == id)
                 .unwrap()
                 .clone();
-            let mut tag = horizon_client::entity_nbt::item_frame_to_nbt(
+            let mut tag = horizon_client::entity_nbt::item_frame_to_nbt_with_items(
                 &frame,
                 *game.persist.uuids.get(&id).unwrap(),
                 None,
+                game.items(),
             );
             let Tag::Compound(fields) = &mut tag else {
                 unreachable!()

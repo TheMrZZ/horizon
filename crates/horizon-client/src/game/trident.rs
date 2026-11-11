@@ -126,6 +126,22 @@ impl ThrownTrident {
         self.sound_event = n.sound_event;
     }
     /// `AbstractArrow.addAdditionalSaveData` + `DealtDamage`.
+    pub(super) fn to_nbt_with_items(
+        &self,
+        uuid: [i32; 4],
+        registry: &horizon_world::registry::BlockRegistry,
+        raw: Option<&horizon_world::nbt::Tag>,
+        catalog: &horizon_client::items::Items,
+    ) -> horizon_world::nbt::Tag {
+        let mut saved = self.to_nbt(uuid, registry, raw);
+        if let horizon_world::nbt::Tag::Compound(fields) = &mut saved {
+            fields.insert(
+                "item".into(),
+                horizon_items::item_nbt::item_to_nbt_with_items(&self.stack, catalog),
+            );
+        }
+        saved
+    }
     pub(super) fn to_nbt(
         &self,
         uuid: [i32; 4],
