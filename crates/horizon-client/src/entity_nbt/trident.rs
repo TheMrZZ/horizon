@@ -1,7 +1,7 @@
 //! Thrown tridents: `AbstractArrow`, `Projectile` and `ThrownTrident` save data.
 use super::{
-    Base, Pickup, Tag, Vec3, flag, item_from_nbt, item_to_nbt, motion, number, owner_uuid,
-    position, put, rotation, string, text,
+    Base, Pickup, Tag, Vec3, flag, item_from_nbt, motion, number, owner_uuid, position, put,
+    rotation, string, text,
 };
 
 /// A thrown trident as `AbstractArrow` + `ThrownTrident` save it.
@@ -31,6 +31,23 @@ pub struct TridentSave<'a> {
 pub const TRIDENT_HIT_GROUND: &str = "minecraft:item.trident.hit_ground";
 /// `ThrownTrident.addAdditionalSaveData`, including its arrow/projectile state.
 pub fn trident_to_nbt(t: &TridentSave, uuid: [i32; 4], raw: Option<&Tag>) -> Tag {
+    trident_to_nbt_saved(t, uuid, raw, None)
+}
+pub fn trident_to_nbt_with_items(
+    t: &TridentSave,
+    uuid: [i32; 4],
+    raw: Option<&Tag>,
+    catalog: &crate::items::Items,
+) -> Tag {
+    trident_to_nbt_saved(t, uuid, raw, Some(catalog))
+}
+fn trident_to_nbt_saved(
+    t: &TridentSave,
+    uuid: [i32; 4],
+    raw: Option<&Tag>,
+    catalog: Option<&crate::items::Items>,
+) -> Tag {
+    let saved = super::saved_stacks::SavedStacks(catalog);
     let mut tag = Base {
         id: "minecraft:trident",
         uuid,
@@ -64,7 +81,7 @@ pub fn trident_to_nbt(t: &TridentSave, uuid: [i32; 4], raw: Option<&Tag>) -> Tag
         ("crit", Tag::Byte(0)),
         ("PierceLevel", Tag::Byte(0)),
         ("SoundEvent", string(t.sound_event)),
-        ("item", item_to_nbt(t.item)),
+        ("item", saved.stack(t.item)),
         ("DealtDamage", Tag::Byte(i8::from(t.dealt_damage))),
         ("Fire", Tag::Short(t.fire_ticks as i16)),
     ] {

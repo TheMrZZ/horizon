@@ -25,6 +25,12 @@ use std::{collections::HashMap, sync::Arc};
 mod projectile_fields;
 use projectile_fields::{load_projectile_entity_fields, put_projectile_entity_fields};
 mod saved_attributes;
+mod saved_offers;
+mod saved_stacks;
+use saved_offers::put_offers;
+pub use saved_offers::{offers_to_nbt, offers_to_nbt_with_items};
+use saved_stacks::SavedStacks;
+pub use saved_stacks::*;
 
 /// Saved data carried by `ConversionType.convertCommon` outside the modelled
 /// mob fields. The converted entity has its own identity and type-specific data;
@@ -586,13 +592,15 @@ fn mob_effect_tag(e: &crate::effects::EffectInstance, root: bool) -> Tag {
 /// `angry_at`) is written: it answers the UUID of a mob by its id, from the game
 /// layer's map, and `None` for one the level no longer has. A caller with no
 /// such map passes `|_| None` and writes no reference.
-pub fn mob_to_nbt(
+fn mob_to_nbt_saved(
     m: &Mob,
     uuid: [i32; 4],
     raw: Option<&Tag>,
     registry: Option<&BlockRegistry>,
     mut uuid_of: impl FnMut(u32) -> Option<[i32; 4]>,
+    catalog: Option<&crate::items::Items>,
 ) -> Tag {
+    let saved = SavedStacks(catalog);
     use crate::mobs::Species as S;
     let base = Base {
         id: &m.kind.id,
@@ -847,13 +855,7 @@ pub fn mob_to_nbt(
     if matches!(id, "minecraft:pillager" | "minecraft:wandering_trader") {
         map.insert(
             "Inventory".into(),
-            Tag::List(
-                m.extra
-                    .inventory
-                    .iter()
-                    .map(crate::save::item_to_nbt)
-                    .collect(),
-            ),
+            Tag::List(m.extra.inventory.iter().map(|s| saved.stack(s)).collect()),
         );
     }
     let species = m.species();
@@ -1009,13 +1011,7 @@ pub fn mob_to_nbt(
                 // InventoryCarrier.writeInventoryToTag.
                 map.insert(
                     "Inventory".into(),
-                    Tag::List(
-                        m.extra
-                            .inventory
-                            .iter()
-                            .map(crate::save::item_to_nbt)
-                            .collect(),
-                    ),
+                    Tag::List(m.extra.inventory.iter().map(|s| saved.stack(s)).collect()),
                 );
             }
         }
@@ -1048,18 +1044,22 @@ pub fn mob_to_nbt(
                 map.insert("ChestedHorse".into(), Tag::Byte(i8::from(m.extra.chested)));
             }
             if m.extra.chested && !m.extra.items.is_empty() {
-                map.insert("Items".into(), crate::save::encode_items(&m.extra.items));
+                map.insert("Items".into(), saved.slots(&m.extra.items));
             } else {
                 map.remove(&"Items".into());
             }
             let mut equipment = Vec::new();
             if let Some(saddle) = m.saddle_item() {
-                equipment.push(("saddle", crate::save::item_to_nbt(&saddle)));
+                equipment.push(("saddle", saved.stack(&saddle)));
             }
             if let Some(armor) = &m.extra.body {
                 equipment.push((
                     "body",
-                    Tag::compound([("id", string(armor)), ("count", Tag::Int(1))]),
+                    saved.stack(
+                        &m.equipment_stacks()[6]
+                            .clone()
+                            .unwrap_or_else(|| crate::items::ItemStack::new(armor, 1)),
+                    ),
                 ));
             }
             // A helmet given to the mount (say by `/item ... armor.head`)
@@ -1067,7 +1067,11 @@ pub fn mob_to_nbt(
             if let Some(helmet) = &m.extra.head {
                 equipment.push((
                     "head",
-                    Tag::compound([("id", string(helmet)), ("count", Tag::Int(1))]),
+                    saved.stack(
+                        &m.equipment_stacks()[5]
+                            .clone()
+                            .unwrap_or_else(|| crate::items::ItemStack::new(helmet, 1)),
+                    ),
                 ));
             }
             if equipment.is_empty() {
@@ -1109,7 +1113,7 @@ pub fn mob_to_nbt(
                 _ => Compound::new(),
             };
             if let Some(saddle) = m.saddle_item() {
-                equipment.insert("saddle".into(), crate::save::item_to_nbt(&saddle));
+                equipment.insert("saddle".into(), saved.stack(&saddle));
             } else {
                 equipment.remove(&"saddle".into());
             }
@@ -1136,7 +1140,7 @@ pub fn mob_to_nbt(
             map.insert("VillagerData".into(), villager_data(m));
             let xp = m.extra.trade.as_deref().map_or(0, |t| t.xp);
             map.insert("Xp".into(), Tag::Int(xp));
-            put_offers(map, m);
+            put_offers(map, m, saved);
             crate::mobs::zombie_villager::write_nbt(m, map);
         }
         "minecraft:villager" => {
@@ -1147,7 +1151,7 @@ pub fn mob_to_nbt(
             map.insert("Xp".into(), Tag::Int(t.xp));
             map.insert("LastRestock".into(), Tag::Long(t.last_restock));
             map.insert("RestocksToday".into(), Tag::Int(t.restocks_today));
-            put_offers(map, m);
+            put_offers(map, m, saved);
             put_memories(map, m);
             crate::mobs::villager::write_nbt(m, map);
         }
@@ -1157,7 +1161,7 @@ pub fn mob_to_nbt(
             map.insert("Moistness".into(), Tag::Int(m.extra.counter));
         }
         "minecraft:wandering_trader" => {
-            put_offers(map, m);
+            put_offers(map, m, saved);
             // WanderingTrader.addAdditionalSaveData: the visit's countdown and
             // the place it is walking to, a BlockPos codec (an int array).
             map.insert("DespawnDelay".into(), Tag::Int(m.extra.ints[5]));
@@ -1214,7 +1218,7 @@ pub fn mob_to_nbt(
         "minecraft:allay" => {
             // InventoryCarrier: the fetched stack; the liked player memory.
             let inv = crate::mobs::allay::inventory(m)
-                .map(item_to_nbt)
+                .map(|s| saved.stack(s))
                 .into_iter()
                 .collect();
             map.insert("Inventory".into(), Tag::List(inv));
@@ -1287,7 +1291,7 @@ pub fn mob_to_nbt(
             if let Some(saddle) = m.saddle_item() {
                 map.insert(
                     "equipment".into(),
-                    Tag::compound([("saddle", crate::save::item_to_nbt(&saddle))]),
+                    Tag::compound([("saddle", saved.stack(&saddle))]),
                 );
             } else {
                 map.remove(&"equipment".into());
@@ -1603,7 +1607,7 @@ pub fn mob_to_nbt(
                     stack.data_mut().enchantments = g.slots[index].clone();
                     stack.data_mut().trim = g.trims[index].clone();
                 }
-                equipment.insert(slot.into(), crate::save::item_to_nbt(&stack));
+                equipment.insert(slot.into(), saved.stack(&stack));
                 continue;
             }
             // A worn piece or held item that kept its damage, name or
@@ -1622,7 +1626,7 @@ pub fn mob_to_nbt(
                     ][index],
                 )
             {
-                equipment.insert(slot.into(), crate::save::item_to_nbt(&stack));
+                equipment.insert(slot.into(), saved.stack(&stack));
                 continue;
             }
             // Enchanted or trimmed gear is saved with its components.
@@ -1632,7 +1636,7 @@ pub fn mob_to_nbt(
                 let mut stack = crate::items::ItemStack::new(id, 1);
                 stack.data_mut().enchantments = g.slots[index].clone();
                 stack.data_mut().trim = g.trims[index].clone();
-                equipment.insert(slot.into(), crate::save::item_to_nbt(&stack));
+                equipment.insert(slot.into(), saved.stack(&stack));
                 continue;
             }
             match item {
@@ -1654,7 +1658,7 @@ pub fn mob_to_nbt(
                         if !has_patterns {
                             equipment.insert(
                                 slot.into(),
-                                crate::save::item_to_nbt(&crate::mobs::raider::ominous_banner()),
+                                saved.stack(&crate::mobs::raider::ominous_banner()),
                             );
                         }
                     } else if !keep {
@@ -1675,7 +1679,7 @@ pub fn mob_to_nbt(
         // LivingEntity saves the actual saddle equipment even on a mob whose
         // Survival interaction does not offer saddling (for example a husk).
         if let Some(saddle) = m.saddle_item() {
-            equipment.insert("saddle".into(), crate::save::item_to_nbt(&saddle));
+            equipment.insert("saddle".into(), saved.stack(&saddle));
         }
         // A happy ghast wears its harness in the body slot (and a nautilus
         // its armour, a sulfur cube its swallowed block, a wolf its armor,
@@ -1683,12 +1687,14 @@ pub fn mob_to_nbt(
         if crate::mobs::species::body_slot(m.species())
             && let Some(id) = &m.extra.body
         {
-            let mut stack = crate::items::ItemStack::new(id, 1);
+            let mut stack = m.equipment_stacks()[6]
+                .clone()
+                .unwrap_or_else(|| crate::items::ItemStack::new(id, 1));
             if m.species() == crate::mobs::Species::Wolf {
                 stack.damage = m.extra.body_damage.max(0) as u32;
                 stack.extra = m.extra.body_extra.clone();
             }
-            equipment.insert("body".into(), crate::save::item_to_nbt(&stack));
+            equipment.insert("body".into(), saved.stack(&stack));
         }
         // Vanilla saves `equipment` only when something is equipped.
         if equipment.is_empty() {
@@ -2984,13 +2990,15 @@ pub fn item_entity_from_nbt(tag: &Tag, id: u32, bob_offset: f32) -> Option<ItemE
 /// empty) and `spawn_item_after_ticks`. Its tick count is the entity's
 /// `tickCount`, which isn't saved: a reloaded spawner counts from 0 again.
 /// It never moves, so the `Motion` it was loaded with is what it saves.
-pub fn ominous_item_spawner_to_nbt(
+fn ominous_item_spawner_to_nbt_saved(
     item: &crate::items::ItemStack,
     position: Vec3,
     spawn_item_after: i64,
     uuid: [i32; 4],
     raw: Option<&Tag>,
+    catalog: Option<&crate::items::Items>,
 ) -> Tag {
+    let saved = SavedStacks(catalog);
     let base = Base {
         id: "minecraft:ominous_item_spawner",
         uuid,
@@ -3007,7 +3015,7 @@ pub fn ominous_item_spawner_to_nbt(
         map.remove(&"item".into());
     }
     if &*item.item != "minecraft:air" {
-        put(&mut tag, "item", item_to_nbt(item));
+        put(&mut tag, "item", saved.stack(item));
     }
     put(
         &mut tag,
@@ -3085,13 +3093,15 @@ pub fn orbs_from_nbt(tag: &Tag) -> Vec<ExperienceOrb> {
 
 /// `Projectile` + `AbstractArrow.addAdditionalSaveData` of a live arrow;
 /// `in_block` is its `inBlockState`, `raw` the compound it was loaded with.
-pub fn arrow_to_nbt(
+fn arrow_to_nbt_saved(
     p: &Projectile,
     uuid: [i32; 4],
     owner: Option<[i32; 4]>,
     in_block: Option<Tag>,
     raw: Option<&Tag>,
+    catalog: Option<&crate::items::Items>,
 ) -> Option<Tag> {
+    let saved = SavedStacks(catalog);
     let a = p.arrow.as_deref()?;
     let ProjectileKind::Arrow {
         base_damage,
@@ -3130,7 +3140,7 @@ pub fn arrow_to_nbt(
         ("crit", Tag::Byte(i8::from(critical))),
         ("PierceLevel", Tag::Byte(a.pierce as i8)),
         ("HasBeenShot", Tag::Byte(i8::from(a.has_been_shot))),
-        ("item", item_to_nbt(&a.pickup_item)),
+        ("item", saved.stack(&a.pickup_item)),
     ] {
         put(&mut tag, key, value);
     }
@@ -3144,7 +3154,7 @@ pub fn arrow_to_nbt(
         map.remove(&"can_break".into());
     }
     if let Some(weapon) = &a.fired_from_weapon {
-        put(&mut tag, "weapon", item_to_nbt(weapon));
+        put(&mut tag, "weapon", saved.stack(weapon));
     }
     // `Projectile.addAdditionalSaveData`: the actual decoded predicate,
     // never a stale source compound or the pickup item's component patch.
@@ -3235,12 +3245,14 @@ pub fn arrow_from_nbt(
 /// `LargeFireball`, `SmallFireball` and `WitherSkull`: `AbstractHurtingProjectile`'s
 /// `acceleration_power`, `Projectile`'s owner and flags, `ExplosionPower`,
 /// and a skull's `dangerous`.
-pub fn fireball_to_nbt(
+fn fireball_to_nbt_saved(
     p: &Projectile,
     uuid: [i32; 4],
     owner: Option<[i32; 4]>,
     raw: Option<&Tag>,
+    catalog: Option<&crate::items::Items>,
 ) -> Option<Tag> {
+    let saved = SavedStacks(catalog);
     let power = match p.kind {
         ProjectileKind::LargeFireball { power } => Some(power),
         ProjectileKind::SmallFireball
@@ -3279,7 +3291,7 @@ pub fn fireball_to_nbt(
     // Fireball.addAdditionalSaveData: the item `getItem` returns, a fire
     // charge unless `setItem` was given another (kept as a single one).
     if let Some(item) = &p.item {
-        put(&mut tag, "Item", item_to_nbt(item));
+        put(&mut tag, "Item", saved.stack(item));
     }
     Some(tag)
 }
@@ -3373,12 +3385,14 @@ pub fn saved_with_chunk(p: &Projectile) -> bool {
 
 /// `ThrowableItemProjectile.addAdditionalSaveData`: `Projectile`'s keys and
 /// the `Item` it flies as.
-pub fn throwable_to_nbt(
+fn throwable_to_nbt_saved(
     p: &Projectile,
     uuid: [i32; 4],
     owner: Option<[i32; 4]>,
     raw: Option<&Tag>,
+    catalog: Option<&crate::items::Items>,
 ) -> Option<Tag> {
+    let saved = SavedStacks(catalog);
     let item = throwable_item(&p.kind)?;
     let base = Base {
         id: p.kind.id(),
@@ -3398,12 +3412,18 @@ pub fn throwable_to_nbt(
     }
     // the loaded item stays (a blue egg's, a renamed one's, a potion's
     // effects); when there is none, `getItem`'s default is written.
-    if tag.get("Item").is_none() {
+    if catalog.is_some() {
+        let stack = p.item.clone().unwrap_or_else(|| match &p.kind {
+            ProjectileKind::Potion(stack, _) => (**stack).clone(),
+            _ => crate::items::ItemStack::new(item, 1),
+        });
+        put(&mut tag, "Item", saved.stack(&stack));
+    } else if tag.get("Item").is_none() {
         let stack = match &p.kind {
             ProjectileKind::Potion(stack, _) => (**stack).clone(),
             _ => crate::items::ItemStack::new(item, 1),
         };
-        put(&mut tag, "Item", item_to_nbt(&stack));
+        put(&mut tag, "Item", saved.stack(&stack));
     }
     Some(tag)
 }
@@ -3422,6 +3442,7 @@ pub fn throwable_from_nbt(tag: &Tag, player: Option<[i32; 4]>) -> Option<Project
     let owner = owner_uuid(tag);
     let from_player = player.is_some() && owner == player;
     let mut p = Projectile::new(kind, position(tag)?, from_player.then_some(Who::Player));
+    p.item = tag.get("Item").and_then(item_from_nbt);
     p.velocity = motion(tag);
     [p.yaw, p.pitch] = rotation(tag);
     p.left_owner = flag(tag, "LeftOwner");
@@ -3635,7 +3656,13 @@ pub struct RocketSave<'a> {
     pub on_ground: bool,
     pub has_been_shot: bool,
 }
-pub fn firework_rocket_to_nbt(r: &RocketSave, uuid: [i32; 4], raw: Option<&Tag>) -> Tag {
+fn firework_rocket_to_nbt_saved(
+    r: &RocketSave,
+    uuid: [i32; 4],
+    raw: Option<&Tag>,
+    catalog: Option<&crate::items::Items>,
+) -> Tag {
+    let saved = SavedStacks(catalog);
     let mut tag = Base {
         id: "minecraft:firework_rocket",
         uuid,
@@ -3649,7 +3676,7 @@ pub fn firework_rocket_to_nbt(r: &RocketSave, uuid: [i32; 4], raw: Option<&Tag>)
     for (key, value) in [
         ("Life", Tag::Int(r.life)),
         ("LifeTime", Tag::Int(r.lifetime)),
-        ("FireworksItem", item_to_nbt(r.item)),
+        ("FireworksItem", saved.stack(r.item)),
         ("ShotAtAngle", Tag::Byte(i8::from(r.angled))),
         ("HasBeenShot", Tag::Byte(i8::from(r.has_been_shot))),
     ] {
@@ -3665,7 +3692,10 @@ pub fn firework_rocket_to_nbt(r: &RocketSave, uuid: [i32; 4], raw: Option<&Tag>)
 }
 
 mod trident;
-pub use trident::{TRIDENT_HIT_GROUND, TridentNbt, TridentSave, trident_from_nbt, trident_to_nbt};
+pub use trident::{
+    TRIDENT_HIT_GROUND, TridentNbt, TridentSave, trident_from_nbt, trident_to_nbt,
+    trident_to_nbt_with_items,
+};
 mod hanging;
 pub use hanging::*;
 
@@ -3795,7 +3825,13 @@ pub fn cushion_from_nbt(tag: &Tag, id: u32) -> Option<Cushion> {
 #[path = "cushion_tests.rs"]
 mod cushion_tests;
 /// ArmorStand.addAdditionalSaveData with LivingEntity's `equipment`.
-pub fn armor_stand_to_nbt(a: &ArmorStand, uuid: [i32; 4], raw: Option<&Tag>) -> Tag {
+fn armor_stand_to_nbt_saved(
+    a: &ArmorStand,
+    uuid: [i32; 4],
+    raw: Option<&Tag>,
+    catalog: Option<&crate::items::Items>,
+) -> Tag {
+    let saved = SavedStacks(catalog);
     let base = Base {
         id: "minecraft:armor_stand",
         uuid,
@@ -3809,7 +3845,7 @@ pub fn armor_stand_to_nbt(a: &ArmorStand, uuid: [i32; 4], raw: Option<&Tag>) -> 
     let equipment: Vec<(&str, Tag)> = ArmorStand::SLOTS
         .iter()
         .zip(&a.equipment)
-        .filter_map(|(slot, stack)| Some((*slot, item_to_nbt(stack.as_ref()?))))
+        .filter_map(|(slot, stack)| Some((*slot, saved.stack(stack.as_ref()?))))
         .collect();
     // `equipment` is saved only when something is worn, `Marker` only when set.
     if equipment.is_empty() {
@@ -3944,7 +3980,7 @@ pub fn armor_stand_from_nbt(tag: &Tag, id: u32) -> Option<ArmorStand> {
 /// Ordinary slots use `ContainerHelper.saveAllItems` through the existing item encoder.
 /// `ground` is the live `OnGround` and `fall_distance` (`Entity.saveWithoutId`).
 #[allow(clippy::too_many_arguments)]
-pub fn boat_to_nbt(
+fn boat_to_nbt_saved(
     id: &str,
     position: Vec3,
     motion: Vec3,
@@ -3953,7 +3989,9 @@ pub fn boat_to_nbt(
     uuid: [i32; 4],
     raw: Option<&Tag>,
     items: Option<&[Option<crate::items::ItemStack>]>,
+    catalog: Option<&crate::items::Items>,
 ) -> Tag {
+    let saved = SavedStacks(catalog);
     let mut tag = Base {
         id,
         uuid,
@@ -3974,7 +4012,7 @@ pub fn boat_to_nbt(
             } else {
                 map.remove(&"LootTable".into());
                 map.remove(&"LootTableSeed".into());
-                map.insert("Items".into(), crate::save::encode_items(items));
+                map.insert("Items".into(), saved.slots(items));
             }
         } else {
             map.remove(&"LootTable".into());
@@ -4038,67 +4076,6 @@ fn villager_data(m: &Mob) -> Tag {
         ),
         ("level", Tag::Int(i32::from(m.extra.variant3.max(1)))),
     ])
-}
-/// `AbstractVillager` "Offers" (`MerchantOffers.CODEC`).
-fn put_offers(map: &mut Compound, m: &Mob) {
-    let Some(t) = m.extra.trade.as_ref().filter(|t| !t.unset) else {
-        return;
-    };
-    map.insert("Offers".into(), offers_to_nbt(&t.offers));
-}
-/// `ItemCost.CODEC`: id, count (always written) and the exact components.
-fn item_cost_to_nbt(stack: &crate::items::ItemStack) -> Tag {
-    let mut tag = item_to_nbt(stack);
-    if let Tag::Compound(c) = &mut tag
-        && !c.contains_key(&"count".into())
-    {
-        c.insert("count".into(), Tag::Int(stack.count as i32));
-    }
-    tag
-}
-/// `MerchantOffers.CODEC`: `{Recipes: [...]}`, each offer without the
-/// fields at their defaults.
-pub fn offers_to_nbt(offers: &[crate::merchant::MerchantOffer]) -> Tag {
-    let recipes = offers
-        .iter()
-        .map(|o| {
-            let mut entries = vec![
-                ("buy", item_cost_to_nbt(&o.base_cost_a.stack)),
-                ("sell", item_to_nbt(&o.result)),
-            ];
-            // `MerchantOffer.CODEC` omits fields at their defaults.
-            if o.uses != 0 {
-                entries.push(("uses", Tag::Int(o.uses)));
-            }
-            if o.max_uses != 4 {
-                entries.push(("maxUses", Tag::Int(o.max_uses)));
-            }
-            if o.price_multiplier != 0.0 {
-                entries.push(("priceMultiplier", Tag::Float(o.price_multiplier.to_bits())));
-            }
-            if o.xp != 1 {
-                entries.push(("xp", Tag::Int(o.xp)));
-            }
-            if !o.reward_exp {
-                entries.push(("rewardExp", Tag::Byte(0)));
-            }
-            if o.special_price_diff != 0 {
-                entries.push(("specialPrice", Tag::Int(o.special_price_diff)));
-            }
-            if o.demand != 0 {
-                entries.push(("demand", Tag::Int(o.demand)));
-            }
-            if let Some(b) = &o.cost_b {
-                entries.push(("buyB", item_cost_to_nbt(&b.stack)));
-            }
-            Tag::compound(entries)
-        })
-        .collect::<Vec<_>>();
-    // An empty list is the field's default: left out.
-    if recipes.is_empty() {
-        return Tag::Compound(Compound::new());
-    }
-    Tag::compound([("Recipes", Tag::List(recipes))])
 }
 /// The offers of a `MerchantOffers.CODEC` tag.
 pub fn offers_from_nbt(tag: &Tag) -> Vec<crate::merchant::MerchantOffer> {
