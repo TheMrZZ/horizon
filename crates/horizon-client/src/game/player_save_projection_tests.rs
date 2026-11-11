@@ -269,3 +269,6 @@ fn actual_player_save_tracks_mutable_body_and_keeps_guest_context() {
         "actual saved-player projection failures: {failures:#?}"
     );
 }
+
+#[path = "player_save_projection_tests/max_stack_saved_tests.rs"]
+pub(super) mod max_stack_saved_tests;
