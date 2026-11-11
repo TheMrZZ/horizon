@@ -184,7 +184,10 @@ impl Game<'_> {
     pub(super) fn native_player_compound(&self, uuid: u128) -> Option<Tag> {
         match self.native_place(uuid)? {
             Place::Acting => None,
-            Place::Guest(i) => Some(playerdata::player_tag(&self.lan.as_ref()?.hub.guests[i])),
+            Place::Guest(i) => Some(playerdata::player_tag_with_items(
+                &self.lan.as_ref()?.hub.guests[i],
+                self.items(),
+            )),
         }
     }
 

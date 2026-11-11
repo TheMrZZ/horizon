@@ -120,18 +120,34 @@ pub fn load_owner(guest: &mut Guest, world: &Path, saved: Option<&Level>) -> boo
 /// then to the file level.dat names, which it loads ([`load_owner`]), and to
 /// its own file, so that the one it loads is never the older of the two.
 pub fn save_owner(guest: &Guest, level: &mut Level, world: &Path) {
+    save_owner_saved(guest, level, world, None)
+}
+pub fn save_owner_with_items(
+    guest: &Guest,
+    level: &mut Level,
+    world: &Path,
+    catalog: &crate::items::Items,
+) {
+    save_owner_saved(guest, level, world, Some(catalog))
+}
+fn save_owner_saved(
+    guest: &Guest,
+    level: &mut Level,
+    world: &Path,
+    catalog: Option<&crate::items::Items>,
+) {
     // `MinecraftServer.saveAllChunks`: `saveDataTag(worldData, getSingleplayerProfile().id())`
     // — the server's own profile on every save, never the stale `singleplayer_uuid` a
     // world arrived with (a Realms download, a server world). The player file written is
     // then the owner's own, not another player's the world happened to name.
     level.player_uuid = Some(uuid_ints(guest.uuid));
-    store(guest, level, None);
+    store_saved(guest, level, None, catalog);
     // `saveDataTag`: level.dat carries the profile the player file is named after, so the
     // file the owner loads next is the one just written.
     if let Err(e) = level.write(world) {
         log::warn!("Horizon: the owner's playerdata is not saved: {e}");
     }
-    save(guest, world);
+    save_saved(guest, world, catalog);
 }
 
 /// Move a world that older Horizon builds named by the offline profile to the account's
@@ -326,18 +342,33 @@ pub fn apply(guest: &mut Guest, level: &Level) {
 /// The shared player compound for logout and autosave snapshots, and for
 /// `player-export`'s record (`arrivals::export_record`).
 pub fn player_tag(guest: &Guest) -> Tag {
+    player_tag_saved(guest, None)
+}
+pub fn player_tag_with_items(guest: &Guest, catalog: &crate::items::Items) -> Tag {
+    player_tag_saved(guest, Some(catalog))
+}
+fn player_tag_saved(guest: &Guest, catalog: Option<&crate::items::Items>) -> Tag {
     let mut level = Level {
         player_uuid: Some(uuid_ints(guest.uuid)),
         ..Level::default()
     };
     store(guest, &mut level, None);
+    if let Some(items) = catalog {
+        crate::saved_stacks::capture_level(&mut level, items);
+    }
     level.player_tag()
 }
 
 /// Save a leaving guest, including its saved vehicle tree.
 pub fn save(guest: &Guest, world: &Path) {
+    save_saved(guest, world, None)
+}
+pub fn save_with_items(guest: &Guest, world: &Path, catalog: &crate::items::Items) {
+    save_saved(guest, world, Some(catalog))
+}
+fn save_saved(guest: &Guest, world: &Path, catalog: Option<&crate::items::Items>) {
     let file = path(world, guest.uuid);
-    if let Err(e) = write_dat(&file, player_tag(guest)) {
+    if let Err(e) = write_dat(&file, player_tag_saved(guest, catalog)) {
         log::warn!("Horizon: {} is not saved: {e}", file.display());
     }
 }
@@ -345,8 +376,22 @@ pub fn save(guest: &Guest, world: &Path) {
 /// [`save`], synced to the disk and saying whether the file was written: a hand-over's commit
 /// point (`player-confirm`) answers only once it is.
 pub fn save_now(guest: &Guest, world: &Path) -> Result<(), String> {
+    save_now_saved(guest, world, None)
+}
+pub fn save_now_with_items(
+    guest: &Guest,
+    world: &Path,
+    catalog: &crate::items::Items,
+) -> Result<(), String> {
+    save_now_saved(guest, world, Some(catalog))
+}
+fn save_now_saved(
+    guest: &Guest,
+    world: &Path,
+    catalog: Option<&crate::items::Items>,
+) -> Result<(), String> {
     let file = path(world, guest.uuid);
-    crate::save::write_dat_durable(&file, player_tag(guest))
+    crate::save::write_dat_durable(&file, player_tag_saved(guest, catalog))
         .map_err(|e| format!("{} is not saved: {e}", file.display()))
 }
 
@@ -391,11 +436,27 @@ pub struct Autosaves {
 
 impl Autosaves {
     pub fn enqueue(&mut self, guest: &Guest, world: &Path) {
+        self.enqueue_saved(guest, world, None)
+    }
+    pub fn enqueue_with_items(
+        &mut self,
+        guest: &Guest,
+        world: &Path,
+        catalog: &crate::items::Items,
+    ) {
+        self.enqueue_saved(guest, world, Some(catalog))
+    }
+    fn enqueue_saved(
+        &mut self,
+        guest: &Guest,
+        world: &Path,
+        catalog: Option<&crate::items::Items>,
+    ) {
         let snapshot = Snapshot {
             uuid: guest.uuid,
             name: guest.name.clone(),
             file: path(world, guest.uuid),
-            tag: player_tag(guest),
+            tag: player_tag_saved(guest, catalog),
         };
         if self.writer.is_none() {
             let (send, receive) = std::sync::mpsc::channel::<Snapshot>();
@@ -443,8 +504,24 @@ impl Autosaves {
 
     /// Serialize a newer logout snapshot after every queued autosave.
     pub fn save_after(&mut self, guest: &Guest, world: &Path) -> Vec<SavedPlayer> {
+        self.save_after_saved(guest, world, None)
+    }
+    pub fn save_after_with_items(
+        &mut self,
+        guest: &Guest,
+        world: &Path,
+        catalog: &crate::items::Items,
+    ) -> Vec<SavedPlayer> {
+        self.save_after_saved(guest, world, Some(catalog))
+    }
+    fn save_after_saved(
+        &mut self,
+        guest: &Guest,
+        world: &Path,
+        catalog: Option<&crate::items::Items>,
+    ) -> Vec<SavedPlayer> {
         let saved = self.completed(true);
-        save(guest, world);
+        save_saved(guest, world, catalog);
         saved
     }
 
@@ -506,6 +583,22 @@ impl Drop for Autosaves {
 /// Put a guest's state in `level`'s player fields; `vehicle` is the
 /// RootVehicle compound of the ride (`ServerPlayer.saveParentVehicle`).
 pub fn store(guest: &Guest, level: &mut Level, vehicle: Option<Tag>) {
+    store_saved(guest, level, vehicle, None)
+}
+pub fn store_with_items(
+    guest: &Guest,
+    level: &mut Level,
+    vehicle: Option<Tag>,
+    catalog: &crate::items::Items,
+) {
+    store_saved(guest, level, vehicle, Some(catalog))
+}
+fn store_saved(
+    guest: &Guest,
+    level: &mut Level,
+    vehicle: Option<Tag>,
+    catalog: Option<&crate::items::Items>,
+) {
     level.player_impulse_grace = guest.motion.as_ref().map(|p| p.impulse.reset_grace_time);
     level.player_fall_particles = guest
         .motion
@@ -641,6 +734,9 @@ pub fn store(guest: &Guest, level: &mut Level, vehicle: Option<Tag>) {
     put(101, &guest.armor[2]);
     put(100, &guest.armor[3]);
     put(150, &guest.offhand);
+    if let Some(items) = catalog {
+        crate::saved_stacks::capture_level(level, items);
+    }
 }
 
 #[cfg(test)]
@@ -1565,5 +1661,51 @@ mod tests {
         assert!(load_owner(&mut g, &dir, Some(&read)));
         assert_eq!(first_item(&g), Some(("minecraft:diamond", 5)));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn catalog_snapshot_keeps_guest_identity_and_survives_writer_reload() {
+        use crate::items::Items;
+        use horizon_world::loot::PackOverlay;
+        let root = std::env::temp_dir().join(format!("h088-guest-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("data/minecraft/loot_table")).unwrap();
+        std::fs::write(
+            root.join("items.json"),
+            r#"{"minecraft:stone":{"minecraft:max_stack_size":64}}"#,
+        )
+        .unwrap();
+        let items = Items::catalog(&root, &PackOverlay::NONE).unwrap();
+        let mut g = holding(0x88000000000000000000000000000001, "minecraft:stone", 2);
+        g.inventory[0]
+            .as_mut()
+            .unwrap()
+            .data_mut()
+            .set_other("minecraft:max_stack_size", Some(Tag::Int(64)));
+        g.ender_items[5] = g.inventory[0].clone();
+        let live = g.inventory[0].clone();
+        let mut writer = Autosaves::default();
+        writer.enqueue_with_items(&g, &root, &items);
+        let saved = writer.completed(true);
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].uuid, g.uuid);
+        let tag = read_dat(&path(&root, g.uuid)).unwrap();
+        assert_eq!(tag.get("UUID"), Some(&uuid_tag(uuid_ints(g.uuid))));
+        for key in ["Inventory", "EnderItems"] {
+            let Tag::List(stacks) = tag.get(key).unwrap() else {
+                panic!("{key}")
+            };
+            assert_eq!(stacks[0].get("count"), Some(&Tag::Int(2)));
+            assert!(stacks[0].get("components").is_none());
+        }
+        assert_eq!(g.inventory[0], live);
+        let mut back = guest();
+        back.uuid = g.uuid;
+        assert!(load(&mut back, &root));
+        assert_eq!(back.inventory[0].as_ref().unwrap().count, 2);
+        assert!(back.inventory[0].as_ref().unwrap().data().is_none());
+        assert_eq!(
+            player_tag_with_items(&back, &items),
+            player_tag_with_items(&g, &items)
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

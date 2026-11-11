@@ -313,8 +313,12 @@ impl Game<'_> {
         self.guest_attachments_into(&mut g);
         // An autosave of this player still in flight must not land after this write.
         let _ = self.finish_player_autosaves(true);
-        let written = horizon_client::lan::playerdata::save_now(&g, &self.world_root)
-            .and_then(|()| self.write_arrival_records(host, &g));
+        let written = horizon_client::lan::playerdata::save_now_with_items(
+            &g,
+            &self.world_root,
+            self.items(),
+        )
+        .and_then(|()| self.write_arrival_records(host, &g));
         let name = g.name.clone();
         host.hub.guests.insert(i, g);
         written?;

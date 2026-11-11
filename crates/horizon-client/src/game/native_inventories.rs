@@ -438,6 +438,7 @@ impl Game<'_> {
          -> Result<Side, NativeInventoryError> {
             if let Side::File(mut level) = side {
                 set_level_slots(&mut level, kind, slots);
+                horizon_client::saved_stacks::capture_level(&mut level, self.items());
                 write_dat(&playerdata::path(&world, uuid), level.player_tag())
                     .map_err(|e| NativeInventoryError::File(e.to_string()))?;
                 return Ok(Side::File(level));
@@ -605,6 +606,7 @@ impl Game<'_> {
                 let mut held = usize::try_from(level.selected_slot).unwrap_or(0);
                 let r = edit(&mut slots, &mut held)?;
                 set_level_slots(&mut level, kind, slots);
+                horizon_client::saved_stacks::capture_level(&mut level, self.items());
                 level.selected_slot = held as i32;
                 write_dat(
                     &playerdata::path(&self.world_root, uuid),
@@ -923,6 +925,7 @@ impl Game<'_> {
             return drops;
         }
         set_level_slots(&mut level, kind, slots);
+        horizon_client::saved_stacks::capture_level(&mut level, self.items());
         let Err(e) = write_dat(
             &playerdata::path(&self.world_root, uuid),
             level.player_tag(),

@@ -408,6 +408,7 @@ mod resource_load;
 mod resource_loader;
 mod resource_tables;
 mod respawn_anchor;
+mod saved_stacks;
 mod saves_control;
 mod saving;
 mod scoreboard;
@@ -7403,23 +7404,6 @@ impl Game<'_> {
     pub(super) fn vehicle_attack_sounds(&mut self, area: Aabb, magic: Option<i32>) {
         self.attack_effects(area, None, false, mace::Spared::Nothing, magic);
     }
-    /// Copies of a save batch carrying its live block entities and save data.
-    fn with_entities<'a>(
-        &self,
-        chunks: impl IntoIterator<Item = &'a Arc<horizon_client::chunk::Chunk>>,
-    ) -> Vec<Arc<horizon_client::chunk::Chunk>> {
-        horizon_client::save::chunks_with_block_entities(
-            chunks,
-            &self.world.block_entities,
-            &self.world.block_names,
-        )
-        .into_iter()
-        .map(|mut c| {
-            self.attach_save_data(&mut c);
-            Arc::new(c)
-        })
-        .collect()
-    }
     fn tick_mobs(&mut self) -> Result<()> {
         self.sync_mob_death_protection();
         self.tick_creatures()?;
@@ -8988,6 +8972,7 @@ impl Game<'_> {
         }
         level.ender_items = self.ender_items.clone();
         level.active_effects = self.potions.effects.saved();
+        self.capture_player_stacks();
     }
     /// The autosave doesn't `wait` for the chunks to be on disk: every
     /// generated chunk is saved, hundreds at a time, encoded and written on

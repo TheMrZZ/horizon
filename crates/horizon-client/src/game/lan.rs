@@ -1554,30 +1554,6 @@ impl Game<'_> {
             host.hub.guests.insert(i, g);
         }
     }
-    /// Save a guest when they leave or the world closes (after
-    /// `take_parent_vehicle`, `PlayerList.save`): an integrated server's owner
-    /// into the level (`/data`) and both its files (`playerdata::save_owner`),
-    /// anyone else into their own file.
-    pub(super) fn save_guest(
-        &mut self,
-        host: &LanHost,
-        guest: &mut horizon_client::lan::guest::Guest,
-    ) {
-        self.guest_attachments_into(guest);
-        // A player a proxy moved to another server (`player-release moved`) is saved
-        // there now, not here.
-        if guest.placed && !guest.released {
-            let _ = self.finish_player_autosaves(true);
-            if host.owner.as_ref().is_some_and(|o| o.uuid == guest.uuid) {
-                playerdata::save_owner(guest, &mut self.level, &self.world_root);
-            } else {
-                self.player_autosaves.save_after(guest, &self.world_root);
-            }
-            let directory = playerdata::directory(&self.world_root);
-            self.native_player_save_to_file(guest.uuid, &guest.name, &directory);
-        }
-        self.save_guest_records(host, guest);
-    }
     /// The vehicles the other players in level `dim` ride, all but the
     /// guest `but` (`Entity.hasExactlyOnePlayerPassenger`); `host` adds the
     /// host's own player, in the level in place.
@@ -1822,7 +1798,14 @@ impl Game<'_> {
             let live = self.guest_attachments.get(&uuid).cloned();
             let g = playerdata::with_warden(&mut host.hub.guests[i], self.warden_tracker_tag());
             let held = live.map(|a| std::mem::replace(&mut g.attachments, a));
-            playerdata::store(g, &mut self.level, vehicle);
+            playerdata::store_with_items(
+                g,
+                &mut self.level,
+                vehicle,
+                self.world_tables
+                    .as_ref()
+                    .map_or(self.res.items(), |tables| &tables.items),
+            );
             if let Some(held) = held {
                 g.attachments = held;
             }
@@ -4940,3 +4923,5 @@ mod advancement_records;
 
 #[cfg(test)]
 include!("lan/advancement_save_tests.rs");
+
+mod saved_stack_player;

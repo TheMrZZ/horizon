@@ -86,7 +86,13 @@ impl Game<'_> {
                     );
                 }
                 self.guest_attachments_into(g);
-                self.player_autosaves.enqueue(g, &self.world_root);
+                self.player_autosaves.enqueue_with_items(
+                    g,
+                    &self.world_root,
+                    self.world_tables
+                        .as_ref()
+                        .map_or(self.res.items(), |tables| &tables.items),
+                );
             }
             self.save_connected_guest_statistics(&host);
             // PlayerList.saveAll -> PlayerAdvancements.save for connected non-owners.
