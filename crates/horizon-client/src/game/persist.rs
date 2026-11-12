@@ -11,6 +11,7 @@ use passenger_graph::take_passengers;
 mod hurt_by_refs;
 
 use super::{FallingBlock, Game};
+use horizon_client::world::EntityLoadReason;
 use horizon_client::{
     Result,
     chunk::Chunk,
@@ -538,7 +539,7 @@ impl Game<'_> {
         let player_uuid = self.level.player_uuid;
         for (key, tags) in loaded {
             let count = tags.len();
-            for mut tag in tags {
+            for (mut tag, reason) in tags.into_iter().map(|pending| pending.into_parts()) {
                 // A world older builds named by the offline profile names the player that
                 // way in its entities too: migrate them as they load, so the next save of
                 // the chunk keeps the account's UUID (`playerdata::migrate_owner`).
@@ -603,7 +604,16 @@ impl Game<'_> {
                 let before = self.next_entity;
                 // Kinds outside `entity_lists!` first, then the listed kinds
                 // (`Entity::load_nbt`), then whatever else is a compound.
-                if let Err(tag) = self.load_unlisted(key, &kind, uuid, tag)
+                let loaded = if reason == EntityLoadReason::TeleportedTnt
+                    && kind == "minecraft:tnt"
+                    && !is_mob
+                {
+                    self.load_tnt_with_portal(tag, uuid, true);
+                    Ok(())
+                } else {
+                    self.load_unlisted(key, &kind, uuid, tag)
+                };
+                if let Err(tag) = loaded
                     && let Err(tag) = self.load_listed(&kind, uuid, player_uuid, tag)
                 {
                     if !kind.is_empty() && entity_nbt::position(&tag).is_some() {
@@ -870,6 +880,9 @@ impl Game<'_> {
     /// `PrimedTnt.readAdditionalSaveData`: its numeric short fuse (80 when absent) and motion.
     // Its Passengers ride it (EntityType.loadEntityRecursive forces them on).
     pub(super) fn load_tnt(&mut self, tag: Tag, uuid: Option<[i32; 4]>) {
+        self.load_tnt_with_portal(tag, uuid, false);
+    }
+    fn load_tnt_with_portal(&mut self, tag: Tag, uuid: Option<[i32; 4]>, used_portal: bool) {
         if uuid.is_some_and(|u| self.target_with_uuid(u).is_some()) {
             return;
         }
@@ -886,6 +899,7 @@ impl Game<'_> {
             // to int before short narrowing; integer tags narrow directly.
             let fuse = tnt_fuse(&tag);
             self.tnts.push(super::tnt::PrimedTnt {
+                used_portal,
                 rotation: [0.0, 0.0],
                 join: Default::default(),
                 no_gravity: entity_nbt::flag(&tag, "NoGravity"),
@@ -1359,7 +1373,7 @@ impl Game<'_> {
         {
             entity_nbt::fill_common_defaults(&mut tag);
         }
-        tag
+        with_raw(tag, None) // Entity.saveWithoutId's flags, as booleans.
     }
     /// The root of a stack of riders (`Entity.getRootVehicle`).
     fn mob_root(&self, mut i: usize) -> usize {
@@ -1447,7 +1461,7 @@ impl Game<'_> {
                 (at.z.floor() as i32).div_euclid(16),
             );
             self.persist.restored.insert(root_uuid);
-            self.world.loaded_entities.push((key, vec![tag]));
+            self.world.queue_entity_nbt(key, vec![tag]);
             self.spawn_loaded_entities();
         }
         self.persist.restored.insert(uuid);
@@ -2959,7 +2973,7 @@ mod tests {
         }
         // The level is a server's, whose attachments a mod reaches.
         game.options.dedicated = Some(Vec::new());
-        game.world.loaded_entities.push(((0, 0), tags));
+        game.world.queue_entity_nbt((0, 0), tags);
         game.spawn_loaded_entities();
         let saved = game.entity_chunks(&HashSet::from([(0, 0)]), false);
         let saved: Vec<&Tag> = saved.iter().flat_map(|(_, tags)| tags).collect();
@@ -3049,7 +3063,7 @@ mod tests {
                 .filter(|c| c.potion.is_some())
                 .count()
         };
-        game.world.loaded_entities.push(((0, 0), vec![cloud]));
+        game.world.queue_entity_nbt((0, 0), vec![cloud]);
         game.spawn_loaded_entities();
         assert_eq!(clouds(&game), 1, "the cloud loads");
         assert_eq!(game.breath_clouds[0].motion, [0.6, 0.0, 0.0]);
@@ -3061,7 +3075,7 @@ mod tests {
             Vec3::new(0.6, 0.0, 0.0)
         );
         assert_eq!(clouds(&game), 0, "and takes it out of the level");
-        game.world.loaded_entities.push(((0, 0), written));
+        game.world.queue_entity_nbt((0, 0), written);
         game.spawn_loaded_entities();
         assert_eq!(clouds(&game), 1, "loading the chunk again gives one cloud");
         assert_eq!(game.breath_clouds[0].motion, [0.6, 0.0, 0.0]);
@@ -4219,6 +4233,7 @@ mod attribute_instance_save_tests {
         assert!(game.run_command("forceload add 0 0"));
         game.player = Some(PlayerMotion::new(game.motion, Vec3::new(2.5, 200.0, 2.5)).unwrap());
         game.creative = true;
+        game.load_ticking_neighbourhood(0, 0);
         test(&mut game);
     }
     fn mob(game: &Game<'_>, n: i32) -> usize {
@@ -5237,6 +5252,7 @@ mod h262_enderman_absolute_anger_tests {
             game.run_command("summon pig 13.5 200 2.5 {UUID:[I;262,0,0,99],NoAI:1b,NoGravity:1b}")
         );
         game.world.random.set_seed(262);
+        game.load_ticking_neighbourhood(0, 0);
         test(&mut game);
     }
     fn load(game: &mut Game<'_>, n: i32, end: Option<i64>) -> (u32, usize) {
@@ -5472,6 +5488,7 @@ mod sulfur_body_attribute_tests {
         assert!(game.run_command("scoreboard objectives add h192 dummy"));
         game.player = Some(PlayerMotion::new(game.motion, Vec3::new(2.5, 200.0, 2.5)).unwrap());
         game.creative = true;
+        game.load_ticking_neighbourhood(0, 0);
         test(&mut game);
     }
     /// `/attribute <cube> <attribute> get 1000`, read back through a score.
@@ -5497,9 +5514,9 @@ mod sulfur_body_attribute_tests {
                 (2, ""),
             ] {
                 assert!(game.run_command(&format!(
-                    "summon minecraft:sulfur_cube {}.5 200 4.5 {{UUID:[I;192,0,0,{n}],NoAI:1b,NoGravity:1b,Silent:1b,PersistenceRequired:1b,Size:1{body}}}",
-                    3 * n
-                )));
+                        "summon minecraft:sulfur_cube {}.5 200 4.5 {{UUID:[I;192,0,0,{n}],NoAI:1b,NoGravity:1b,Silent:1b,PersistenceRequired:1b,Size:1{body}}}",
+                        3 * n
+                    )));
             }
             let attrs = [
                 "knockback_resistance",
@@ -5543,8 +5560,8 @@ mod sulfur_body_attribute_tests {
     fn a_bodiless_cube_keeps_its_command_knockback_resistance_effect() {
         with_game(|game| {
             assert!(game.run_command(
-                "summon minecraft:sulfur_cube 4.5 200 8.5 {UUID:[I;192,0,0,9],NoAI:1b,NoGravity:1b,Silent:1b,PersistenceRequired:1b,Size:1}"
-            ));
+                    "summon minecraft:sulfur_cube 4.5 200 8.5 {UUID:[I;192,0,0,9],NoAI:1b,NoGravity:1b,Silent:1b,PersistenceRequired:1b,Size:1}"
+                ));
             let sel = "@e[type=minecraft:sulfur_cube,nbt={UUID:[I;192,0,0,9]},limit=1]";
             let cached = |game: &Game<'_>| {
                 let m = game
@@ -5611,9 +5628,9 @@ mod sulfur_body_attribute_tests {
                 (11, ",equipment:{body:{id:\"minecraft:oak_planks\"}}"),
             ] {
                 assert!(game.run_command(&format!(
-                    "summon minecraft:sulfur_cube {}.5 200 8.5 {{UUID:[I;192,0,0,{n}],NoAI:1b,NoGravity:1b,Silent:1b,PersistenceRequired:1b,Size:1{body}}}",
-                    n - 8
-                )));
+                        "summon minecraft:sulfur_cube {}.5 200 8.5 {{UUID:[I;192,0,0,{n}],NoAI:1b,NoGravity:1b,Silent:1b,PersistenceRequired:1b,Size:1{body}}}",
+                        n - 8
+                    )));
             }
             game.tick_world(true).unwrap();
             let cached = |game: &Game<'_>, n: i32| {
@@ -5726,6 +5743,7 @@ mod summoned_knot_tests {
             game.run_command("summon pig 13.5 200 2.5 {UUID:[I;129,0,0,99],NoAI:1b,NoGravity:1b}")
         );
         game.world.random.set_seed(129);
+        game.load_ticking_neighbourhood(0, 0);
         test(&mut game);
     }
     fn knot_id(game: &Game<'_>, n: i32) -> u32 {
@@ -5856,12 +5874,8 @@ mod summoned_knot_tests {
     #[ignore = "prepared resources; negative fractional registered position"]
     fn negative_fractional_knot_position_uses_floor_before_centering() {
         with_game(|game| {
-            game.world
-                .chunks
-                .insert((-1, -1), Arc::new(Chunk::empty(-1, -1)));
-            game.block_ticks
-                .add_empty_chunk(ChunkPos::new(-1, -1))
-                .unwrap();
+            // Chunk (-1, -1) is already loaded by the fixture's neighbourhood.
+            assert!(game.world.chunks.contains_key(&(-1, -1)));
             assert!(game.run_command("setblock -2 199 -3 stone strict"));
             assert!(game.run_command("setblock -2 200 -3 oak_fence strict"));
             assert!(game.run_command("summon leash_knot -1.2 200.8 -2.1 {UUID:[I;129,0,0,5]}"));
@@ -6088,7 +6102,9 @@ mod camel_pose_saved_tests {
             .into_iter()
             .flat_map(|(_, tags)| tags)
             .collect();
-        game.world.loaded_entities.push(((0, 0), written));
+        game.world
+            .loaded_entities
+            .push(((0, 0), written.into_iter().map(Into::into).collect()));
         game.spawn_loaded_entities();
         for step in 0..8 {
             for number in 1..=cases.len() as i32 {
