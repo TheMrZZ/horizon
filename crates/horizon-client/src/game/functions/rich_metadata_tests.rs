@@ -56,7 +56,9 @@ fn with_game(test: impl FnOnce(&mut Game<'_>)) {
 #[ignore = "requires prepared resources; H146 current rich metadata baseline"]
 fn rich_description_admission_reaches_loaded_game_functions() {
     with_game(|game| {
-        let path = std::path::PathBuf::from(std::env::var_os("H146_CASES").unwrap());
+        // The 53 descriptions and vanilla's verdict on each.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tools/fixtures/rich_description_admission.json");
         let cases: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         let dir = std::path::PathBuf::from(std::env::var_os("HORIZON_HOME").unwrap()).join("rich-world");
         assert!(!dir.exists());
