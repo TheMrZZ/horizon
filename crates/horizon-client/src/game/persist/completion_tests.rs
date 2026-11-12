@@ -262,7 +262,11 @@ fn admitted_families_load_merge_save_and_reload() {
         let keys = HashSet::from([(0, 0)]);
         let chunks = g.entity_chunks(&keys, true);
         eprintln!("h161 actual chunk payload={chunks:?}");
-        g.world.loaded_entities.extend(chunks);
+        g.world.loaded_entities.extend(
+            chunks
+                .into_iter()
+                .map(|(key, tags)| (key, tags.into_iter().map(Into::into).collect())),
+        );
         g.spawn_loaded_entities();
         for &(_, parent, _, saved) in cases {
             let root = id(g, parent).expect("reloaded root");
@@ -372,7 +376,11 @@ fn registered_nosave_riders_are_live_but_not_serialized_or_vehicles() {
             assert!(id(g, n + 3).is_none());
         }
         let chunks = g.entity_chunks(&HashSet::from([(0, 0)]), true);
-        g.world.loaded_entities.extend(chunks);
+        g.world.loaded_entities.extend(
+            chunks
+                .into_iter()
+                .map(|(key, tags)| (key, tags.into_iter().map(Into::into).collect())),
+        );
         g.spawn_loaded_entities();
         for n in [850, 860] {
             assert!(id(g, n).is_some());
