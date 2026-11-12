@@ -4,6 +4,7 @@
 #[cfg(test)]
 mod discovery_tests;
 pub mod metadata;
+mod slot_sources;
 use crate::zip::Zip;
 use horizon_world::{
     nbt::Tag,
@@ -732,6 +733,8 @@ pub struct DataStore {
     pub item_modifiers: BTreeMap<String, serde_json::Value>,
     /// `slot_source` definitions, evaluated against a command's live accessor.
     pub slot_sources: BTreeMap<String, serde_json::Value>,
+    /// Slot-source tags belong to the same loaded snapshot as their definitions.
+    pub slot_source_tags: BTreeMap<String, Vec<(String, bool)>>,
     /// The content tables' raw files from the packs after the built-in one:
     /// `recipe/`, `recipe_filter/`, `loot_table/`, `advancement/`, `dialog/`, `damage_type/`, `data_maps/`, `enchantment/` and `tags/…/` files, by
     /// `<kind-dir>/<ns>:<path>`, each id's files in pack order. The tables
@@ -828,6 +831,16 @@ impl DataStore {
                     && let Ok(v) = serde_json::from_slice(&bytes)
                 {
                     s.item_modifiers.insert(id, v);
+                } else if let Some(id) = resource_id(&f, "tags/slot_source", ".json")
+                    && let Some(bytes) = pack.read(&f)
+                    && let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                {
+                    let entries = tag_entries(&v);
+                    let slot = s.slot_source_tags.entry(id).or_default();
+                    if v["replace"].as_bool() == Some(true) {
+                        slot.clear();
+                    }
+                    slot.extend(entries);
                 } else if let Some(id) = resource_id(&f, "slot_source", ".json")
                     && let Some(bytes) = pack.read(&f)
                     && let Ok(v) = serde_json::from_slice(&bytes)
