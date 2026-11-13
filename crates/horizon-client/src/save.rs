@@ -20,7 +20,6 @@ mod metadata_tests;
 mod respawn;
 mod writes;
 use writes::{Outstanding, Writer};
-
 use crate::{
     Result,
     beehive::BeehiveExt,
