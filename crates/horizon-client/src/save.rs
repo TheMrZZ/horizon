@@ -18,6 +18,9 @@ mod block_entity_order;
 #[cfg(test)]
 mod metadata_tests;
 mod respawn;
+mod writes;
+use writes::{Outstanding, Writer};
+
 use crate::{
     Result,
     beehive::BeehiveExt,
@@ -749,7 +752,7 @@ pub fn encode_block_entity(
                         .collect(),
                 ),
             ));
-            entries.push(("triggered", Tag::Int(i32::from(c.triggered))));
+            entries.push(("triggered", Tag::Int(c.triggered)));
             entries.push(("crafting_ticks_remaining", Tag::Int(c.crafting_ticks)));
         }
         BlockEntity::Banner(b) => {
@@ -941,7 +944,7 @@ fn decode_mod_block_entity(id: String, tag: &Tag) -> Option<crate::containers::M
 }
 pub fn decode_block_entity(tag: &Tag) -> Option<((i32, i32, i32), crate::containers::BlockEntity)> {
     use crate::containers::BlockEntity;
-    let int = |k: &str| number(tag.get(k)).map(|v| v as i32);
+    let int = |k: &str| tag.get(k).and_then(crate::nbt_path::int_value); // getIntOr
     let id = text(tag.get("id"))?;
     let pos = (int("x")?, int("y")?, int("z")?);
     if id.contains(':') && !id.starts_with("minecraft:") {
@@ -1124,7 +1127,7 @@ pub fn decode_block_entity(tag: &Tag) -> Option<((i32, i32, i32), crate::contain
                     }
                 }
             }
-            c.triggered = int("triggered").unwrap_or(0) != 0;
+            c.triggered = int("triggered").unwrap_or(0);
             c.state_triggered = None;
             c.crafting_ticks = int("crafting_ticks_remaining").unwrap_or(0);
         }
@@ -2500,21 +2503,6 @@ impl Folder {
     }
 }
 
-/// The background thread that encodes chunks and writes them into the region files, in
-/// submission order.
-struct Writer {
-    send: mpsc::Sender<WriteBatch>,
-    thread: std::thread::JoinHandle<()>,
-}
-
-/// Writes still queued or running, with a condition to wait for none.
-#[derive(Default)]
-struct Outstanding {
-    count: Mutex<usize>,
-    chunks: AtomicUsize,
-    error: Mutex<Option<String>>,
-    done: Condvar,
-}
 /// One dimension folder (`dimensions/minecraft/<name>`). Region files are
 /// read lazily by worker threads.
 pub struct SaveDir {
@@ -2974,172 +2962,6 @@ impl SaveDir {
         }
         out
     }
-    /// Queue `records` for the writer thread; with `wait`, return once
-    /// they and every earlier write are on disk.
-    fn write_records(
-        &self,
-        folder: &str,
-        records: Vec<((i32, i32), Option<NamedTag>)>,
-        wait: bool,
-    ) -> Result<()> {
-        let records = records
-            .into_iter()
-            .map(|(k, t)| (k, t.map_or(Record::Delete, |t| Record::Tag(Arc::new(t)))))
-            .collect();
-        self.queue(Folder::of(folder), records, wait)
-    }
-    fn queue(&self, folder: Folder, records: Vec<((i32, i32), Record)>, wait: bool) -> Result<()> {
-        if !records.is_empty() {
-            let mut batch = Vec::with_capacity(records.len());
-            {
-                let mut pending = self.pending.lock().map_err(|_| "pending writes poisoned")?;
-                for (key, record) in records {
-                    let seq = self.sequence.fetch_add(1, Ordering::Relaxed);
-                    pending.insert((folder, key.0, key.1), (seq, record.clone()));
-                    batch.push((key, record, seq));
-                }
-            }
-            *self
-                .outstanding
-                .count
-                .lock()
-                .map_err(|_| "writer poisoned")? += 1;
-            let mut writer = self.writer.lock().map_err(|_| "writer poisoned")?;
-            let writer = writer.get_or_insert_with(|| self.start_writer());
-            let chunks = if folder == Folder::Region {
-                batch.len()
-            } else {
-                0
-            };
-            self.outstanding.chunks.fetch_add(chunks, Ordering::Relaxed);
-            if writer.send.send((folder, batch)).is_err() {
-                self.outstanding.chunks.fetch_sub(chunks, Ordering::Relaxed);
-                *self
-                    .outstanding
-                    .error
-                    .lock()
-                    .map_err(|_| "writer poisoned")? = Some("the region writer stopped".into());
-                *self
-                    .outstanding
-                    .count
-                    .lock()
-                    .map_err(|_| "writer poisoned")? -= 1;
-                self.outstanding.done.notify_all();
-                return Err("the region writer stopped".into());
-            }
-        }
-        if wait {
-            self.flush()?;
-        }
-        Ok(())
-    }
-    fn start_writer(&self) -> Writer {
-        let (send, receive) = mpsc::channel::<WriteBatch>();
-        let root = self.root.clone();
-        let (regions, entity_regions, poi_regions) = (
-            self.regions.clone(),
-            self.entity_regions.clone(),
-            self.poi_regions.clone(),
-        );
-        let pending = self.pending.clone();
-        let outstanding = self.outstanding.clone();
-        let thread = std::thread::Builder::new()
-            .name("horizon-region-writer".into())
-            .spawn(move || {
-                for (kind, batch) in receive {
-                    let cache = match kind {
-                        Folder::Region => &regions,
-                        Folder::Entities => &entity_regions,
-                        Folder::Poi => &poi_regions,
-                    };
-                    let folder = kind.name();
-                    // IOWorker.pendingWrites: a chunk queued again since is
-                    // written once, by its newest batch.
-                    let newest = |k: &(i32, i32), seq: u64| {
-                        pending.lock().map_or(true, |p| {
-                            p.get(&(kind, k.0, k.1)).is_none_or(|p| p.0 <= seq)
-                        })
-                    };
-                    let resolved: Vec<_> = batch
-                        .iter()
-                        .filter(|(k, _, seq)| newest(k, *seq))
-                        .filter_map(|(k, r, _)| Some((*k, resolve_poi(&root, cache, *k, r)?)))
-                        .collect();
-                    let records: Vec<_> = resolved.iter().map(|(k, r)| (*k, r)).collect();
-                    let result = write_region_records(&root, cache, folder, &records);
-                    if let Err(e) = &result {
-                        let message = format!("failed to write {folder} files: {e}");
-                        log::warn!("Horizon: {message}");
-                        *outstanding.error.lock().unwrap() = Some(message);
-                        // `reportChunkSaveFailure` for each chunk of the batch.
-                        for (k, _, _) in &batch {
-                            crate::chunk_io::report_save_failure(&root, k.0, k.1, e);
-                        }
-                    }
-                    // Keep failed snapshots readable; never report them as durable.
-                    if result.is_ok()
-                        && let Ok(mut pending) = pending.lock()
-                    {
-                        for (k, _, seq) in &batch {
-                            if pending.get(&(kind, k.0, k.1)).is_some_and(|p| p.0 == *seq) {
-                                pending.remove(&(kind, k.0, k.1));
-                            }
-                        }
-                    }
-                    if kind == Folder::Region {
-                        outstanding.chunks.fetch_sub(batch.len(), Ordering::Relaxed);
-                    }
-                    if let Ok(mut count) = outstanding.count.lock() {
-                        *count -= 1;
-                        outstanding.done.notify_all();
-                    }
-                }
-            })
-            .expect("spawn region writer");
-        Writer { send, thread }
-    }
-    /// Wait until every queued write is on disk.
-    pub fn flush(&self) -> Result<()> {
-        let mut count = self
-            .outstanding
-            .count
-            .lock()
-            .map_err(|_| "writer poisoned")?;
-        while *count > 0 {
-            count = self
-                .outstanding
-                .done
-                .wait(count)
-                .map_err(|_| "writer poisoned")?;
-        }
-        self.write_result()
-    }
-    /// `ChunkMap.activeChunkWrites`: chunk records, excluding entity/POI IO.
-    pub fn active_chunk_writes(&self) -> usize {
-        self.outstanding.chunks.load(Ordering::Relaxed)
-    }
-    /// Poll durability without holding up the event loop. Errors remain visible
-    /// to every waiter, including a later synchronous shutdown.
-    pub fn writes_finished(&self) -> Result<bool> {
-        let count = self
-            .outstanding
-            .count
-            .lock()
-            .map_err(|_| "writer poisoned")?;
-        self.write_result()?;
-        Ok(*count == 0)
-    }
-    fn write_result(&self) -> Result<()> {
-        match &*self
-            .outstanding
-            .error
-            .lock()
-            .map_err(|_| "writer poisoned")?
-        {
-            Some(error) => Err(error.clone().into()),
-            None => Ok(()),
-        }
-    }
     /// Write `chunks` into their region files and wait until they are on disk.
     pub fn save(
         &self,
@@ -3226,16 +3048,6 @@ impl SaveDir {
             })
             .collect();
         self.write_records("entities", records, wait)
-    }
-}
-
-impl Drop for SaveDir {
-    /// Finish queued writes before the world is let go.
-    fn drop(&mut self) {
-        if let Some(writer) = self.writer.get_mut().ok().and_then(Option::take) {
-            drop(writer.send);
-            let _ = writer.thread.join();
-        }
     }
 }
 
@@ -3640,8 +3452,8 @@ pub enum WorldPreset {
     Amplified,
     SingleBiomeSurface,
     /// `minecraft:debug_all_block_states`: a grid of every block state
-    /// (`DebugLevelSource`). The create screen does not offer it; a data
-    /// pack, `level-type` or a saved world names it.
+    /// (`DebugLevelSource`). The create screen offers it only with Alt held;
+    /// a data pack, `level-type` or a saved world names it too.
     Debug,
 }
 impl WorldPreset {
@@ -6722,7 +6534,7 @@ mod tests {
         let mut crafter = crate::containers::Crafter::default();
         crafter.items[2] = Some(crate::items::ItemStack::new("minecraft:stick", 5));
         crafter.disabled[4] = true;
-        crafter.triggered = true;
+        crafter.triggered = 1;
         crafter.crafting_ticks = 3;
         let tag = encode_block_entity(
             (7, 8, 9),
@@ -6736,9 +6548,49 @@ mod tests {
         };
         assert_eq!(back.items[2].as_ref().map(|s| s.count), Some(5));
         assert!(back.disabled[4] && !back.disabled[3]);
-        assert!(back.triggered);
+        assert!(back.is_triggered());
         assert_eq!(back.crafting_ticks, 3);
         assert_eq!(back.redstone_signal(), 2);
+    }
+    /// `triggered` is an int vanilla saves as it is and calls triggered only at 1, so other
+    /// values come back unchanged and untriggered.
+    #[test]
+    fn crafter_triggered_keeps_the_whole_int() {
+        for value in [0, 1, 5, -1, 65537] {
+            let crafter = crate::containers::Crafter {
+                triggered: value,
+                ..Default::default()
+            };
+            let tag = encode_block_entity(
+                (0, 0, 0),
+                &crate::containers::BlockEntity::Crafter(crafter),
+                "minecraft:crafter",
+            );
+            let (_, back) = decode_block_entity(&tag).expect("crafter");
+            let crate::containers::BlockEntity::Crafter(back) = back else {
+                panic!("not a crafter");
+            };
+            assert_eq!(back.triggered, value);
+            assert_eq!(back.is_triggered(), value == 1, "triggered {value}");
+        }
+    }
+    #[test]
+    fn crafter_triggered_double_load_floors_and_saturates() {
+        for (value, expected) in [(-0.5_f64, -1), (1.5, 1), (4294967297.0, i32::MAX)] {
+            let tag = Tag::compound([
+                ("id", string("minecraft:crafter")),
+                ("x", Tag::Int(0)),
+                ("y", Tag::Int(0)),
+                ("z", Tag::Int(0)),
+                ("triggered", Tag::Double(value.to_bits())),
+            ]);
+            let (_, back) = decode_block_entity(&tag).expect("crafter");
+            let crate::containers::BlockEntity::Crafter(back) = back else {
+                panic!("not a crafter");
+            };
+            assert_eq!(back.triggered, expected, "triggered {value}d");
+            assert_eq!(back.is_triggered(), expected == 1, "triggered {value}d");
+        }
     }
     #[test]
     fn campfire_block_entity_round_trips() {
