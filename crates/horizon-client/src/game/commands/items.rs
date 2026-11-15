@@ -2787,6 +2787,15 @@ mod registered_slot_source_preservation_tests {
     use super::*;
 
     fn scene(name: &str) -> (Game<'static>, std::path::PathBuf) {
+        let (mut game, high) = packs(name);
+        game.ensure_datapacks();
+        assert!(game.run_command("setblock 0 100 0 chest{Items:[{Slot:0b,id:\"stone\",count:5},{Slot:1b,id:\"dirt\",count:2},{Slot:3b,id:\"stone\",count:7}]}"));
+        assert!(game.run_command("scoreboard objectives add slotprobe dummy"));
+        (game, high)
+    }
+
+    /// A world with two packs that both define `parity:first_three`; nothing loaded yet.
+    fn packs(name: &str) -> (Game<'static>, std::path::PathBuf) {
         let mut game = crate::game::native_machines::tests::server_game();
         game.build_registries();
         game.set_allow_commands(true);
@@ -2802,10 +2811,35 @@ mod registered_slot_source_preservation_tests {
             high = path;
         }
         game.world_root = root;
-        game.ensure_datapacks();
+        (game, high)
+    }
+
+    #[test]
+    #[ignore = "needs prepared resources and isolated homes/cwd"]
+    fn a_broken_slot_source_refuses_the_first_load_until_it_is_fixed() {
+        let (mut game, file) = packs("slot-source-first-load-world");
+        let fixed = std::fs::read_to_string(&file).unwrap();
+        // Broken before any command runs, since a command loads the packs lazily.
+        std::fs::write(&file, "{").unwrap();
         assert!(game.run_command("setblock 0 100 0 chest{Items:[{Slot:0b,id:\"stone\",count:5},{Slot:1b,id:\"dirt\",count:2},{Slot:3b,id:\"stone\",count:7}]}"));
         assert!(game.run_command("scoreboard objectives add slotprobe dummy"));
-        (game, high)
+        // The last one parses and binds; only its codec refuses the slot range.
+        for definition in [
+            "{",
+            r#""parity:first_three""#,
+            r#"{"type":"minecraft:slot_range","slots":"container.nope"}"#,
+        ] {
+            std::fs::write(&file, definition).unwrap();
+            // MinecraftServer: the world does not open on a failed first load.
+            assert!(game.start_datapacks().is_err(), "{definition}");
+            // The lazy path admits nothing either.
+            game.ensure_datapacks();
+            assert!(!game.run_command("execute if slots block 0 100 0 parity:first_three"));
+        }
+        // Nothing marked the packs loaded, so the next lazy load picks up the fix.
+        std::fs::write(&file, fixed).unwrap();
+        game.ensure_datapacks();
+        count(&mut game, 3);
     }
 
     fn count(game: &mut Game<'_>, expected: i32) {
@@ -2831,10 +2865,12 @@ mod registered_slot_source_preservation_tests {
         assert!(!game.reload_datapacks(true));
         count(&mut game, 2); // Rejected candidate retains the accepted snapshot.
         // The registry reads a file with TYPED_CODEC: neither a holder id nor an
-        // inline list of sources loads.
+        // inline list of sources loads, nor a source the codec refuses.
         for definition in [
             r#""parity:first_three""#,
             r#"[{"type":"minecraft:slot_range","source":"container","slots":"container.0"}]"#,
+            // Parses and binds; only its codec refuses the slot range.
+            r#"{"type":"minecraft:slot_range","slots":"container.nope"}"#,
         ] {
             std::fs::write(&file, definition).unwrap();
             assert!(!game.reload_datapacks(true), "{definition}");

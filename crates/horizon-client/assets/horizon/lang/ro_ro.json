@@ -241,9 +241,6 @@
   "Peak Brightness": "Luminozitate maximă",
   "Black Level": "Nivelul Negru",
   "UI Brightness": "Luminozitatea interfeței de utilizare",
-  "HDR Lighting": "Iluminare HDR",
-  "Smooth Gradients": "Gradienturi netede",
-  "16-bit frame: dark skies and shadows don't band. A bit more VRAM. Next start.": "Cadru pe 16 biți: cerurile și umbrele întunecate nu mai fac benzi. Puțin mai multă VRAM. La următoarea pornire.",
   "Battery Mode": "Modul baterie",
   "Graphics API": "API grafic",
   "Translucent Batching": "Loturi translucide",
@@ -1043,5 +1040,11 @@
   "horizon.studio.topbar.add_marker": "Adaugă marcaj",
   "horizon.studio.topbar.clear_keyframes": "🗑 Șterge cadrele-cheie",
   "horizon.studio.topbar.timeline_hud": "⏱ Cronologie",
-  "horizon.studio.topbar.split_scene": "Desparte scena"
+  "horizon.studio.topbar.split_scene": "Desparte scena",
+  "horizon.options.block_vibration": "Feedback haptic de la Bedrock",
+  "horizon.options.split_vibration": "Vibrație la împărțirea unui teanc",
+  "horizon.options.impulse_triggers": "Trăgaci cu impuls",
+  "A tick when you break a block, as in Bedrock.": "Când spargi un bloc, acesta vibrează, ca în Bedrock.",
+  "A short buzz when you split a stack, as in Bedrock.": "O vibrație scurtă când împarți un teanc, ca în Bedrock.",
+  "An Xbox One controller's triggers buzz with its handles.": "Trăgacioarele unui controller Xbox One vibrează împreună cu mânerele sale."
 }
