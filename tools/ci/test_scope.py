@@ -30,7 +30,7 @@ HORIZON_CLIENT = [
     "crates/horizon-client-render/src", "crates/horizon-world/src", "crates/horizon-items/src",
     "docs/api/launch-reference.md", "docs/horizon-ctl-commands.md", "docs/parity/random-chance-seeded.jsonl",
     "native-hooks.json", "tools/native-hook-fragments", "packaging/windows/exe.rs", "research-lock.json",
-    "tests/fixtures",
+    "tests/fixtures", "tools/fixtures/rich_description_admission.json",
 ]
 MOD_API_GEN = [
     "native-hooks.json", "tools/native-hook-fragments",
