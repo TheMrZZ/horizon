@@ -21,9 +21,10 @@ impl Game<'_> {
         for (id, value) in &store.slot_sources {
             let (tag, _) = horizon_world::nbt::parse_snbt(&value.to_string())
                 .map_err(|error| format!("{id}: {error}"))?;
-            // A registry file is SlotSources.DIRECT_CODEC (a typed source or an
-            // inline list), not the holder codec: a bare id string loads nothing.
-            if value.is_string() {
+            // RegistryDataLoader reads a slot_source file with
+            // SlotSources.TYPED_CODEC: only an object with a `type` loads, not a
+            // holder id or an inline list (which the holder codec would accept).
+            if !value.is_object() {
                 return Err(format!(
                     "{id}: {}",
                     horizon_client::command::codec::not_map(&tag)

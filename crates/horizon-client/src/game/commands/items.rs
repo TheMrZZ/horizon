@@ -2830,10 +2830,16 @@ mod registered_slot_source_preservation_tests {
         std::fs::write(&file, "{").unwrap();
         assert!(!game.reload_datapacks(true));
         count(&mut game, 2); // Rejected candidate retains the accepted snapshot.
-        // A definition file that is only a holder id is not DIRECT_CODEC.
-        std::fs::write(&file, r#""parity:first_three""#).unwrap();
-        assert!(!game.reload_datapacks(true));
-        count(&mut game, 2);
+        // The registry reads a file with TYPED_CODEC: neither a holder id nor an
+        // inline list of sources loads.
+        for definition in [
+            r#""parity:first_three""#,
+            r#"[{"type":"minecraft:slot_range","source":"container","slots":"container.0"}]"#,
+        ] {
+            std::fs::write(&file, definition).unwrap();
+            assert!(!game.reload_datapacks(true), "{definition}");
+            count(&mut game, 2);
+        }
         assert!(!game.run_command("execute if slots block 0 100 0 first_three"));
         assert_eq!(game.block_entity_nbt([0, 100, 0]).as_ref(), Some(&before));
         assert_eq!(game.world.game_time, clock);
