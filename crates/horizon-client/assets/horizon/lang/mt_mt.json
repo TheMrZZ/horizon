@@ -241,9 +241,6 @@
   "Peak Brightness": "L-ogħla luminożità",
   "Black Level": "Livell Iswed",
   "UI Brightness": "Luminożità UI",
-  "HDR Lighting": "Dawl HDR",
-  "Smooth Gradients": "Gradjenti Lixxi",
-  "16-bit frame: dark skies and shadows don't band. A bit more VRAM. Next start.": "Qafas ta' 16-il bit: is-smewwiet u d-dellijiet skuri ma jagħmlux strixxi. Ftit aktar VRAM. Japplika mal-bidu li jmiss.",
   "Battery Mode": "Modalità tal-batterija",
   "Graphics API": "Grafika API",
   "Translucent Batching": "Batching trasluċidu",
@@ -1043,5 +1040,11 @@
   "horizon.studio.topbar.add_marker": "Żid Markatur",
   "horizon.studio.topbar.clear_keyframes": "🗑 Neħħi l-Keyframes",
   "horizon.studio.topbar.timeline_hud": "⏱ Timeline",
-  "horizon.studio.topbar.split_scene": "Aqsam ix-Xena"
+  "horizon.studio.topbar.split_scene": "Aqsam ix-Xena",
+  "horizon.options.block_vibration": "Feedback haptic minn Bedrock",
+  "horizon.options.split_vibration": "Vibrazzjoni meta tinqasam munita",
+  "horizon.options.impulse_triggers": "Triggers tal-impuls",
+  "A tick when you break a block, as in Bedrock.": "Meta tkisser blokka, din tivvibra, bħal f'Bedrock.",
+  "A short buzz when you split a stack, as in Bedrock.": "Vibrazzjoni qasira meta tinqasam munita, bħal f'Bedrock.",
+  "An Xbox One controller's triggers buzz with its handles.": "It-triggers ta' controller Xbox One jivvibraw flimkien mal-mankijiet tiegħu."
 }
