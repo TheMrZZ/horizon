@@ -2945,11 +2945,17 @@ mod registered_slot_source_preservation_tests {
             r#"[{"type":"minecraft:slot_range","source":"container","slots":"container.0"}]"#,
             // Parses and binds; only its codec refuses the slot range.
             r#"{"type":"minecraft:slot_range","slots":"container.nope"}"#,
+            // FilteredSlotSource's item_filter is an ItemPredicate: its items must exist.
+            r#"{"type":"minecraft:filtered","slot_source":{"type":"minecraft:slot_range","slots":"container.0"},"item_filter":{"items":"minecraft:does_not_exist"}}"#,
         ] {
             std::fs::write(&file, definition).unwrap();
             assert!(game.reload_datapacks(true, &features).is_err(), "{definition}");
             count(&mut game, 2);
         }
+        // The same filtered source with an item that exists loads.
+        std::fs::write(&file, r#"{"type":"minecraft:filtered","slot_source":{"type":"minecraft:slot_range","slots":"container.0"},"item_filter":{"items":"minecraft:stone"}}"#).unwrap();
+        assert!(game.reload_datapacks(true, &features).is_ok());
+        count(&mut game, 1); // container.0 holds stone.
         assert!(!game.run_command("execute if slots block 0 100 0 first_three"));
         assert_eq!(game.block_entity_nbt([0, 100, 0]).as_ref(), Some(&before));
         assert_eq!(game.world.game_time, clock);
