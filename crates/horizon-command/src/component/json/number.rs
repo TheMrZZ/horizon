@@ -39,9 +39,9 @@ pub(super) fn java_numeric(value: &Value) -> Result<Value, Error> {
         return Err(Error::DecodeException);
     }
     let s = if f64::from(d as f32) == d {
-        horizon_world::snbt_text::java_float(d as f32)
+        horizon_core::java_number::float_to_string(d as f32)
     } else {
-        horizon_world::snbt_text::java_double(d)
+        horizon_core::java_number::double_to_string(d)
     };
     Ok(Value::Number(s))
 }

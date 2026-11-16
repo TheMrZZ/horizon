@@ -3,7 +3,7 @@ use crate::component::json::all;
 use crate::component::json::{
     boolean, field, id, list, number, optional, require, string, validate as text,
 };
-use horizon_world::nbt::Tag;
+use horizon_core::nbt::Tag;
 
 pub(super) fn validate(name: &str, v: &Value, ctx: &MetadataContext<'_>) -> Option<R> {
     Some(match name {

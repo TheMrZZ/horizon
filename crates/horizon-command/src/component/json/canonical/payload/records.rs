@@ -233,7 +233,9 @@ pub(super) fn double(v: &Value) -> Result<Value, Error> {
     if !n.is_finite() {
         return Err(Error::DecodeException);
     }
-    Ok(Value::Number(horizon_world::snbt_text::java_double(n)))
+    Ok(Value::Number(horizon_core::java_number::double_to_string(
+        n,
+    )))
 }
 fn resolvable_int(v: &Value) -> Result<Value, Error> {
     if v.is_string() {

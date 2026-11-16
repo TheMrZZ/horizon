@@ -1,5 +1,5 @@
 use super::*;
-use horizon_world::nbt::Tag;
+use horizon_core::nbt::Tag;
 
 pub(super) fn profile(v: &Value) -> Result<Value, Error> {
     super::super::profile::validate(v)?;
@@ -126,14 +126,16 @@ fn tag(t: &Tag) -> Result<Value, Error> {
             if !n.is_finite() {
                 return Err(Error::DecodeException);
             }
-            Ok(Value::Number(horizon_world::snbt_text::java_float(n)))
+            Ok(Value::Number(horizon_core::java_number::float_to_string(n)))
         }
         Tag::Double(n) => {
             let n = f64::from_bits(*n);
             if !n.is_finite() {
                 return Err(Error::DecodeException);
             }
-            Ok(Value::Number(horizon_world::snbt_text::java_double(n)))
+            Ok(Value::Number(horizon_core::java_number::double_to_string(
+                n,
+            )))
         }
         Tag::String(s) => Ok(Value::String(s.to_string_lossy())),
         Tag::List(a) => Ok(Value::Array(a.iter().map(tag).collect::<Result<_, _>>()?)),

@@ -117,7 +117,7 @@ pub(super) fn float(v: &Value) -> Result<Value, Error> {
     if !n.is_finite() {
         return Err(Error::DecodeException);
     }
-    Ok(Value::Number(horizon_world::snbt_text::java_float(n)))
+    Ok(Value::Number(horizon_core::java_number::float_to_string(n)))
 }
 pub(super) fn identifier(v: &Value) -> Result<Value, Error> {
     Ok(Value::String(
