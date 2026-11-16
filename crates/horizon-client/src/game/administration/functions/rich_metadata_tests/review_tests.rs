@@ -27,7 +27,10 @@ fn review_codec_errors_and_patch_collisions_reach_loaded_game() {
         let mut order = None;
         let mut failures = Vec::new();
         for reload in [false, true] {
-            { let features = g.level.enabled_features.clone(); let _ = g.reload_datapacks(reload, &features); }
+            {
+                let features = g.level.enabled_features.clone();
+                let _ = g.reload_datapacks(reload, &features);
+            }
             println!("selected order {reload}: {:?}", g.fns.enabled);
             if let Some(ref expected) = order {
                 assert_eq!(&g.fns.enabled, expected);

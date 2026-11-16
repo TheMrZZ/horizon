@@ -1,9 +1,9 @@
-use std::sync::Arc;
-use horizon_client::chunk::Chunk;
-use horizon_core::{geometry::Vec3,position::ChunkPos};
 use super::*;
 use crate::game::{Audio, Options, Progress, Settings, load_resources};
+use horizon_client::chunk::Chunk;
 use horizon_client::motion::PlayerMotion;
+use horizon_core::{geometry::Vec3, position::ChunkPos};
+use std::sync::Arc;
 fn with_game(test: impl FnOnce(&mut Game<'_>)) {
     let root = std::path::PathBuf::from(std::env::var_os("HORIZON_TEST_RESOURCES").unwrap());
     let settings = Settings::default();
@@ -62,36 +62,75 @@ fn rich_description_admission_reaches_loaded_game_functions() {
         // The 53 descriptions and vanilla's verdict on each.
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tools/fixtures/rich_description_admission.json");
-        let cases: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-        let dir = std::path::PathBuf::from(std::env::var_os("HORIZON_HOME").unwrap()).join("rich-world");
+        let cases: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let dir =
+            std::path::PathBuf::from(std::env::var_os("HORIZON_HOME").unwrap()).join("rich-world");
         assert!(!dir.exists());
         for (i, case) in cases["cases"].as_array().unwrap().iter().enumerate() {
             let name = case["name"].as_str().unwrap();
             let root = dir.join("datapacks").join(name);
             std::fs::create_dir_all(root.join("data/rich/function")).unwrap();
             std::fs::write(root.join("pack.mcmeta"),serde_json::json!({"pack":{"description":case["description"],"pack_format":121,"min_format":[121,0],"max_format":[121,0]}}).to_string()).unwrap();
-            std::fs::write(root.join(format!("data/rich/function/{name}.mcfunction")),format!("scoreboard players set {name} rich {}\n",100+i)).unwrap();
+            std::fs::write(
+                root.join(format!("data/rich/function/{name}.mcfunction")),
+                format!("scoreboard players set {name} rich {}\n", 100 + i),
+            )
+            .unwrap();
         }
-        game.world_root=dir;
+        game.world_root = dir;
         assert!(game.run_command("scoreboard objectives add rich dummy"));
-        let mut mismatches=Vec::new();
-        for reload in [false,true] {
-            { let features = game.level.enabled_features.clone(); let _ = game.reload_datapacks(reload, &features); }
+        let mut mismatches = Vec::new();
+        for reload in [false, true] {
+            {
+                let features = game.level.enabled_features.clone();
+                let _ = game.reload_datapacks(reload, &features);
+            }
             for (i, case) in cases["cases"].as_array().unwrap().iter().enumerate() {
-                let name=case["name"].as_str().unwrap();let valid=case["observed_valid"].as_bool().unwrap();
-                for holder in [name,"#r","#s"] {assert!(game.run_command(&format!("scoreboard players set {holder} rich -99")));}
+                let name = case["name"].as_str().unwrap();
+                let valid = case["observed_valid"].as_bool().unwrap();
+                for holder in [name, "#r", "#s"] {
+                    assert!(game.run_command(&format!("scoreboard players set {holder} rich -99")));
+                }
                 let ran=game.run_command(&format!("execute store result score #r rich store success score #s rich run function rich:{name}"));
-                let physical=game.score.board.score(name,"rich").unwrap().value;
-                let selected=game.fns.enabled.contains(&format!("file/{name}"));
-                let available=game.fns.packs.iter().any(|p|p.id==format!("file/{name}"));
-                let registered=game.fns.store.functions.contains_key(&format!("rich:{name}"));
-                let result=game.score.board.score("#r","rich").unwrap().value;let success=game.score.board.score("#s","rich").unwrap().value;
-                println!("{}",serde_json::json!({"phase":reload,"name":name,"expected_valid":valid,"selected":selected,"available":available,"registered":registered,"ran":ran,"result":result,"success":success,"physical":physical}));
-                if valid {assert_eq!(physical,100+i as i32,"positive actual loaded function prerequisite {name}");}
-                if selected!=valid || available!=valid || registered!=valid || physical!=if valid {100+i as i32}else{-99} {mismatches.push((reload,name.to_owned(),physical));}
+                let physical = game.score.board.score(name, "rich").unwrap().value;
+                let selected = game.fns.enabled.contains(&format!("file/{name}"));
+                let available = game
+                    .fns
+                    .packs
+                    .iter()
+                    .any(|p| p.id == format!("file/{name}"));
+                let registered = game
+                    .fns
+                    .store
+                    .functions
+                    .contains_key(&format!("rich:{name}"));
+                let result = game.score.board.score("#r", "rich").unwrap().value;
+                let success = game.score.board.score("#s", "rich").unwrap().value;
+                println!(
+                    "{}",
+                    serde_json::json!({"phase":reload,"name":name,"expected_valid":valid,"selected":selected,"available":available,"registered":registered,"ran":ran,"result":result,"success":success,"physical":physical})
+                );
+                if valid {
+                    assert_eq!(
+                        physical,
+                        100 + i as i32,
+                        "positive actual loaded function prerequisite {name}"
+                    );
+                }
+                if selected != valid
+                    || available != valid
+                    || registered != valid
+                    || physical != if valid { 100 + i as i32 } else { -99 }
+                {
+                    mismatches.push((reload, name.to_owned(), physical));
+                }
             }
         }
-        assert!(mismatches.is_empty(),"Java-rejected metadata exposed real functions and mutated sentinels: {mismatches:?}");
+        assert!(
+            mismatches.is_empty(),
+            "Java-rejected metadata exposed real functions and mutated sentinels: {mismatches:?}"
+        );
     });
 }
 

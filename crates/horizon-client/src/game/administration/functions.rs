@@ -8,7 +8,6 @@ mod registry_graph;
 #[path = "functions/rich_metadata_context_tests.rs"]
 mod rich_metadata_context_tests;
 #[cfg(test)]
-#[rustfmt::skip]
 #[path = "functions/rich_metadata_tests.rs"]
 mod rich_metadata_tests;
 use super::{
@@ -2931,7 +2930,8 @@ mod tests {
                 true,
                 &[],
                 &[],
-            ).unwrap();
+            )
+            .unwrap();
             let files = content_overlay(&stack);
             let (_, versions) = files.iter().find(|(id, _)| id == "recipe/x:r").unwrap();
             let last = versions.last().unwrap();
@@ -2994,7 +2994,8 @@ mod tests {
             true,
             &[],
             &[],
-        ).unwrap();
+        )
+        .unwrap();
         let files = overlay_files(
             &stack,
             vec![

@@ -19,7 +19,10 @@ fn unavailable_metadata_authority_keeps_the_actual_loaded_store() {
     std::fs::write(&function, first).unwrap();
     assert!(game.run_command("scoreboard objectives add h146_context dummy"));
     let clock = game.world.game_time;
-    { let features = game.level.enabled_features.clone(); let _ = game.reload_datapacks(false, &features); }
+    {
+        let features = game.level.enabled_features.clone();
+        let _ = game.reload_datapacks(false, &features);
+    }
     assert!(game.fns.packs.iter().any(|p| p.id == "file/context"));
     let selected = game.fns.enabled.clone();
     let invoke = |game: &mut Game<'_>, phase: &str, expected| {
@@ -47,7 +50,10 @@ fn unavailable_metadata_authority_keeps_the_actual_loaded_store() {
     std::fs::write(&meta,r#"{"pack":{"description":{"text":"needs authority","hover_event":{"action":"show_item","id":"minecraft:stone"}}}}"#).unwrap();
     std::fs::write(&function, "scoreboard players set #seen h146_context 99\n").unwrap();
     // An authority error returns before publishing packs, functions or tables.
-    { let features = game.level.enabled_features.clone(); let _ = game.reload_datapacks(true, &features); }
+    {
+        let features = game.level.enabled_features.clone();
+        let _ = game.reload_datapacks(true, &features);
+    }
     assert_eq!(game.fns.enabled, selected);
     assert_eq!(
         game.fns.store.functions["h146:keep"]
@@ -59,7 +65,10 @@ fn unavailable_metadata_authority_keeps_the_actual_loaded_store() {
     // Plain inline dialogs/profiles need no item catalog or a second world.
     std::fs::write(&meta,r#"{"pack":{"description":{"object":"player","player":{},"click_event":{"action":"show_dialog","dialog":{"type":"notice","title":"Inline"}}}}}"#).unwrap();
     std::fs::write(&function, "scoreboard players set #seen h146_context 13\n").unwrap();
-    { let features = game.level.enabled_features.clone(); let _ = game.reload_datapacks(false, &features); }
+    {
+        let features = game.level.enabled_features.clone();
+        let _ = game.reload_datapacks(false, &features);
+    }
     invoke(&mut game, "inline-without-catalog", 13);
     assert_eq!(game.world.game_time, clock);
     game.options.resources = resources;
@@ -93,7 +102,10 @@ fn unavailable_metadata_cannot_publish_command_pack_selection() {
         r#"{"enabled":["vanilla","file/a"],"disabled":["file/b"]}"#,
     )
     .unwrap();
-    { let features = game.level.enabled_features.clone(); let _ = game.reload_datapacks(false, &features); }
+    {
+        let features = game.level.enabled_features.clone();
+        let _ = game.reload_datapacks(false, &features);
+    }
     let selected = game.selected_packs();
     let bytes = std::fs::read(&settings).unwrap();
     let clock = game.world.game_time;
@@ -136,7 +148,10 @@ fn successful_command_pack_selection_uses_the_existing_order() {
         r#"{"enabled":["vanilla","file/a"],"disabled":["file/b"]}"#,
     )
     .unwrap();
-    { let features = game.level.enabled_features.clone(); let _ = game.reload_datapacks(false, &features); }
+    {
+        let features = game.level.enabled_features.clone();
+        let _ = game.reload_datapacks(false, &features);
+    }
     assert!(game.run_command("scoreboard objectives add selection dummy"));
     assert!(game.run_command("scoreboard players set #r selection -99"));
     assert!(game.run_command("scoreboard players set #s selection -99"));

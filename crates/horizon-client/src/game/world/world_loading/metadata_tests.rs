@@ -87,7 +87,8 @@ fn pre_world_metadata_errors_propagate_without_empty_worldgen_fallback() {
         })
     ));
     assert!(
-        creation_worldgen_overrides(Some(&root), &resources, &["file/p".into()], biomes, &[]).is_err()
+        creation_worldgen_overrides(Some(&root), &resources, &["file/p".into()], biomes, &[])
+            .is_err()
     );
     assert!(packed_biomes(&root, &resources, biomes, &[], &[]).is_err());
     assert!(level_shapes(&root, &resources, biomes, &[]).is_err());

@@ -237,7 +237,8 @@ fn contributed_packs_are_discoverable_and_only_selected_resources_apply() {
                 true,
                 &[],
                 &data,
-            ).unwrap();
+            )
+            .unwrap();
             let enabled = stack.enabled_packs().collect::<Vec<_>>();
             let store = DataStore::load(&enabled);
             assert_eq!(
@@ -632,7 +633,8 @@ fn hidden_optional_data_pack_is_command_selectable_and_loads_its_function() {
             true,
             &[],
             &data,
-        ).unwrap();
+        )
+        .unwrap();
         let enabled = stack.enabled_packs().collect::<Vec<_>>();
         let store = DataStore::load(&enabled);
         assert_eq!(
