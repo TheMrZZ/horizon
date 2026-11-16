@@ -27,7 +27,7 @@ fn query(game: &mut Game<'_>, key: &str, action: &str) -> (i32, i8) {
 }
 
 #[test]
-#[ignore = "needs prepared resources; actual registered Guest and production console command path"]
+#[ignore = "daily"]
 fn console_guest_vehicle_relation_uses_the_registered_rider() {
     with_game(|game| {
         game.world_root = game.options.game_dir.as_ref().unwrap().join("world");
