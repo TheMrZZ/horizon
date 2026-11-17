@@ -52,10 +52,12 @@ impl Game<'_> {
     /// `RegistryDataLoader.load`: a slot source that does not decode with
     /// `SlotSources.TYPED_CODEC` fails the whole load, before anything is published.
     fn check_slot_sources(&self, store: &DataStore) -> Result<(), ReloadStageError> {
-        self.slot_source_registries(store).map(|_| ()).map_err(|line| {
-            log::error!("{line}");
-            ReloadStageError::DataSource(line)
-        })
+        self.candidate_slot_source_registries(store)
+            .map(|_| ())
+            .map_err(|line| {
+                log::error!("{line}");
+                ReloadStageError::DataSource(line)
+            })
     }
     pub(super) fn prepare_server_reload(
         &self,

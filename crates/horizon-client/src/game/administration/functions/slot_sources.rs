@@ -2,11 +2,73 @@
 use super::{DataStore, Game};
 use horizon_client::command::args::Registries;
 impl Game<'_> {
-    pub(in crate::game) fn slot_source_registries(&self, store: &DataStore) -> Result<Registries, String> {
+    /// The item tags a candidate load would have: the live ones, less those only the loaded
+    /// packs define, plus the candidate packs' own. The world tables that publish them are
+    /// staged after this check, so a filter may name a tag its own pack adds.
+    fn candidate_item_tags(&self, store: &DataStore) -> Vec<String> {
+        let pack_tags = |store: &DataStore| -> std::collections::BTreeSet<String> {
+            store
+                .files
+                .keys()
+                .filter_map(|key| {
+                    let (ns, path) = key.strip_prefix("tags/")?.split_once(':')?;
+                    let path = path.strip_prefix("item/")?;
+                    Some(horizon_client::command::args::normalize(&format!(
+                        "{ns}:{path}"
+                    )))
+                })
+                .collect()
+        };
+        let base: std::collections::BTreeSet<String> = self
+            .res
+            .items()
+            .item_tags
+            .keys()
+            .map(|id| horizon_client::command::args::normalize(id))
+            .collect();
+        let loaded = pack_tags(&self.fns.store);
+        let candidate = pack_tags(store);
+        let mut tags: std::collections::BTreeSet<String> = self
+            .ui
+            .registries
+            .tags("minecraft:item")
+            .iter()
+            .filter(|id| base.contains(*id) || !loaded.contains(*id))
+            .cloned()
+            .collect();
+        tags.extend(candidate);
+        tags.into_iter().collect()
+    }
+    /// The registries a candidate load is checked against: its slot sources and tags, and its
+    /// item tags, published by nothing yet.
+    pub(in crate::game) fn candidate_slot_source_registries(
+        &self,
+        store: &DataStore,
+    ) -> Result<Registries, String> {
+        self.slot_source_registries_with(store, Some(self.candidate_item_tags(store)))
+    }
+    pub(in crate::game) fn slot_source_registries(
+        &self,
+        store: &DataStore,
+    ) -> Result<Registries, String> {
+        self.slot_source_registries_with(store, None)
+    }
+    fn slot_source_registries_with(
+        &self,
+        store: &DataStore,
+        item_tags: Option<Vec<String>>,
+    ) -> Result<Registries, String> {
         if let Some((id, error)) = store.slot_source_errors.first() {
             return Err(format!("{id}: {error}"));
         }
         let mut registries = self.ui.registries.clone();
+        if let Some(item_tags) = item_tags {
+            // `Registries::tags` reads an exported registry's entry first (sync_pack_tag_ids).
+            if let Some(entry) = registries.by_registry.get_mut("minecraft:item") {
+                entry.tags.clone_from(&item_tags);
+            }
+            registries.item_tags = item_tags;
+        }
         let entry = registries
             .by_registry
             .entry("minecraft:slot_source".into())

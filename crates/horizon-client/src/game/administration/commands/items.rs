@@ -2900,7 +2900,10 @@ mod registered_slot_source_preservation_tests {
         ] {
             std::fs::write(&file, definition).unwrap();
             // MinecraftServer: the world does not open on a failed first load.
-            assert!(game.open_world_datapacks(&features).is_err(), "{definition}");
+            assert!(
+                game.open_world_datapacks(&features).is_err(),
+                "{definition}"
+            );
             // The lazy path admits nothing either.
             game.ensure_datapacks();
             assert!(!game.run_command("execute if slots block 0 100 0 parity:first_three"));
@@ -2917,6 +2920,34 @@ mod registered_slot_source_preservation_tests {
             game.score.board.score("#r", "slotprobe").unwrap().value,
             expected
         );
+    }
+
+    /// The candidate's own item tags count: the world tables that publish them are staged
+    /// after the slot sources are checked.
+    #[test]
+    #[ignore = "daily"]
+    fn a_filtered_source_may_name_an_item_tag_its_pack_adds() {
+        let mut resources = None;
+        let directory = tempfile::tempdir().unwrap();
+        let world = directory.path().join("slot-source-pack-tag-world");
+        let (mut game, file) = scene(&mut resources, world.to_str().unwrap());
+        let features = game.level.enabled_features.clone();
+        count(&mut game, 3);
+        let tag = file
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("tags/item/allowed.json");
+        std::fs::create_dir_all(tag.parent().unwrap()).unwrap();
+        std::fs::write(&tag, r#"{"values":["minecraft:stone"]}"#).unwrap();
+        std::fs::write(&file, r##"{"type":"minecraft:filtered","slot_source":{"type":"minecraft:slot_range","slots":"container.*"},"item_filter":{"items":"#parity:allowed"}}"##).unwrap();
+        assert!(game.reload_datapacks(true, &features).is_ok());
+        count(&mut game, 2); // The two stone stacks.
+        // Without the tag the same source names a tag no pack defines any more.
+        std::fs::remove_file(&tag).unwrap();
+        assert!(game.reload_datapacks(true, &features).is_err());
+        count(&mut game, 2); // The rejected candidate keeps the loaded snapshot.
     }
 
     #[test]
@@ -2949,7 +2980,10 @@ mod registered_slot_source_preservation_tests {
             r#"{"type":"minecraft:filtered","slot_source":{"type":"minecraft:slot_range","slots":"container.0"},"item_filter":{"items":"minecraft:does_not_exist"}}"#,
         ] {
             std::fs::write(&file, definition).unwrap();
-            assert!(game.reload_datapacks(true, &features).is_err(), "{definition}");
+            assert!(
+                game.reload_datapacks(true, &features).is_err(),
+                "{definition}"
+            );
             count(&mut game, 2);
         }
         // The same filtered source with an item that exists loads.
