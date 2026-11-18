@@ -39,36 +39,22 @@ impl Game<'_> {
         tags.extend(candidate);
         tags.into_iter().collect()
     }
-    /// The registries a candidate load is checked against: its slot sources and tags, and its
-    /// item tags, published by nothing yet.
+    /// The registries a candidate load is checked and compiled against: its slot sources and
+    /// tags, and its item tags, which the world tables publish only later.
     pub(in crate::game) fn candidate_slot_source_registries(
         &self,
         store: &DataStore,
     ) -> Result<Registries, String> {
-        self.slot_source_registries_with(store, Some(self.candidate_item_tags(store)))
-    }
-    pub(in crate::game) fn slot_source_registries(
-        &self,
-        store: &DataStore,
-    ) -> Result<Registries, String> {
-        self.slot_source_registries_with(store, None)
-    }
-    fn slot_source_registries_with(
-        &self,
-        store: &DataStore,
-        item_tags: Option<Vec<String>>,
-    ) -> Result<Registries, String> {
         if let Some((id, error)) = store.slot_source_errors.first() {
             return Err(format!("{id}: {error}"));
         }
+        let item_tags = self.candidate_item_tags(store);
         let mut registries = self.ui.registries.clone();
-        if let Some(item_tags) = item_tags {
-            // `Registries::tags` reads an exported registry's entry first (sync_pack_tag_ids).
-            if let Some(entry) = registries.by_registry.get_mut("minecraft:item") {
-                entry.tags.clone_from(&item_tags);
-            }
-            registries.item_tags = item_tags;
+        // `Registries::tags` reads an exported registry's entry first (sync_pack_tag_ids).
+        if let Some(entry) = registries.by_registry.get_mut("minecraft:item") {
+            entry.tags.clone_from(&item_tags);
         }
+        registries.item_tags = item_tags;
         let entry = registries
             .by_registry
             .entry("minecraft:slot_source".into())

@@ -856,9 +856,7 @@ impl Game<'_> {
             .as_deref()
             .map(horizon_client::item_data::command_components)
         {
-            Some(Ok(tag)) => {
-                horizon_client::item_data::decode_components_for_item(id, Some(&tag))
-            }
+            Some(Ok(tag)) => horizon_client::item_data::decode_components_for_item(id, Some(&tag)),
             Some(Err(e)) => return Err(CommandError::new(Text::literal(e))),
             None => (0, None),
         };
@@ -2923,6 +2921,39 @@ mod registered_slot_source_preservation_tests {
             game.score.board.score("#r", "slotprobe").unwrap().value,
             expected
         );
+    }
+
+    /// A world's first open admits the packs before its tables exist, so a filter and a
+    /// function naming a tag their pack adds must not be dropped after the check passed.
+    #[test]
+    #[ignore = "daily"]
+    fn a_first_open_admits_a_filter_naming_an_item_tag_its_pack_adds() {
+        let mut resources = None;
+        let directory = tempfile::tempdir().unwrap();
+        let world = directory.path().join("slot-source-first-open-tag-world");
+        let (mut game, file) = packs(&mut resources, world.to_str().unwrap());
+        let data = file.parent().unwrap().parent().unwrap().to_path_buf();
+        std::fs::create_dir_all(data.join("tags/item")).unwrap();
+        std::fs::write(
+            data.join("tags/item/allowed.json"),
+            r#"{"values":["minecraft:stone"]}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(data.join("function")).unwrap();
+        std::fs::write(
+            data.join("function/probe.mcfunction"),
+            "execute if items block 0 100 0 container.0 #parity:allowed\n",
+        )
+        .unwrap();
+        std::fs::write(&file, r##"{"type":"minecraft:filtered","slot_source":{"type":"minecraft:slot_range","slots":"container.*"},"item_filter":{"items":"#parity:allowed"}}"##).unwrap();
+        let features = game.level.enabled_features.clone();
+        let stack = game.open_world_datapacks(&features).unwrap();
+        let root = game.options.resources.clone();
+        game.open_world_tables(&stack, &root).unwrap();
+        assert!(game.run_command("setblock 0 100 0 chest{Items:[{Slot:0b,id:\"stone\",count:5},{Slot:1b,id:\"dirt\",count:2},{Slot:3b,id:\"stone\",count:7}]}"));
+        assert!(game.run_command("scoreboard objectives add slotprobe dummy"));
+        count(&mut game, 2); // The two stone stacks: the source was admitted.
+        assert!(game.run_command("function parity:probe")); // So was the function.
     }
 
     /// The candidate's own item tags count: the world tables that publish them are staged

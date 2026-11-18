@@ -352,8 +352,14 @@ impl Game<'_> {
         // `ServerFunctionLibrary` compiles its functions: an item or block
         // argument's `#tag` resolves against them.
         self.sync_pack_tag_ids();
-        let Ok(mut registries) = self.slot_source_registries(&store) else {
-            return;
+        // The same candidate the prepare step checked: on a world's first open its item tags
+        // are not in the live tables yet.
+        let mut registries = match self.candidate_slot_source_registries(&store) {
+            Ok(registries) => registries,
+            Err(error) => {
+                log::error!("Horizon: slot sources changed after their check: {error}");
+                return;
+            }
         };
         registries.permission = self.fns.command_level();
         registries.functions = store.functions.keys().cloned().collect();
@@ -362,8 +368,13 @@ impl Game<'_> {
         registries.item_modifiers = store.item_modifiers.keys().cloned().collect();
         // On world open the content tables get the world's packs only after this: the
         // candidate's own loot tables are named here, as its predicates and modifiers are.
-        let pack_tables = store.files.keys().filter_map(|id| id.strip_prefix("loot_table/"));
-        registries.loot_tables.extend(pack_tables.map(str::to_owned));
+        let pack_tables = store
+            .files
+            .keys()
+            .filter_map(|id| id.strip_prefix("loot_table/"));
+        registries
+            .loot_tables
+            .extend(pack_tables.map(str::to_owned));
         registries.loot_tables.sort();
         registries.loot_tables.dedup();
         for (id, ids) in [
