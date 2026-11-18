@@ -951,18 +951,23 @@ impl DataStore {
                         slot.clear();
                     }
                     slot.extend(entries);
-                } else if let Some(id) = resource_id(&f, "slot_source", ".json")
-                    && let Some(bytes) = pack.read(&f)
-                {
+                } else if let Some(id) = resource_id(&f, "slot_source", ".json") {
                     // ResourceManagerRegistryLoadTask.load decodes only the
-                    // winning resource, not shadowed definitions or errors.
+                    // winning resource, not shadowed definitions or errors:
+                    // one it cannot read fails the load (PendingRegistration.loadFromResource).
                     s.slot_sources.remove(&id);
                     s.slot_source_errors.retain(|(old, _)| old != &id);
-                    match serde_json::from_slice(&bytes) {
+                    match pack
+                        .source
+                        .read(&f)
+                        .map_err(|error| error.to_string())
+                        .and_then(|bytes| {
+                            serde_json::from_slice(&bytes).map_err(|error| error.to_string())
+                        }) {
                         Ok(value) => {
                             s.slot_sources.insert(id, value);
                         }
-                        Err(error) => s.slot_source_errors.push((id, error.to_string())),
+                        Err(error) => s.slot_source_errors.push((id, error)),
                     }
                 }
             }
@@ -1312,6 +1317,44 @@ pub fn worldgen_overrides_over(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A winning definition that cannot be read fails the load: the lower pack's is no fallback.
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_winning_slot_source_is_a_load_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let root =
+            std::env::temp_dir().join(format!("hz-slot-source-unreadable-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for name in ["lower", "higher"] {
+            let dir = root.join(name).join("data/test/slot_source");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                root.join(name).join("pack.mcmeta"),
+                r#"{"pack":{"description":"slot-source read test"}}"#,
+            )
+            .unwrap();
+            std::fs::write(
+                dir.join("one.json"),
+                r#"{"type":"minecraft:slot_range","slots":"container.0"}"#,
+            )
+            .unwrap();
+        }
+        let packs = discover_folder(&root);
+        let higher = root.join("higher/data/test/slot_source/one.json");
+        std::fs::set_permissions(&higher, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // Root reads any file, so the case cannot be built there.
+        if std::fs::read(&higher).is_err() {
+            let lower_pack = packs.iter().find(|p| p.id == "file/lower").unwrap();
+            let higher_pack = packs.iter().find(|p| p.id == "file/higher").unwrap();
+            let store = DataStore::load(&[lower_pack, higher_pack]);
+            assert!(!store.slot_sources.contains_key("test:one"));
+            assert_eq!(store.slot_source_errors.len(), 1);
+            assert_eq!(store.slot_source_errors[0].0, "test:one");
+        }
+        std::fs::set_permissions(&higher, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn slot_source_parse_errors_follow_the_winning_pack() {
