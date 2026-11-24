@@ -207,7 +207,8 @@ impl Game<'_> {
             None
         };
         let mut cancel = false;
-        self.native_hanging_break(player, kind, pos, &mut cancel);
+        let dimension = self.dim.id();
+        self.native_hanging_break(dimension, player, kind, pos, &mut cancel);
         cancel
     }
     /// `ItemFrameItem.useOn`.
@@ -700,6 +701,9 @@ impl Game<'_> {
     }
     /// ItemFrameRenderer: the frame model, then the item half size on its face.
     pub(super) fn frame_geometry(&mut self, camera: glam::DVec3, out: &mut Vec<Vertex>) {
+        if self.item_frames.is_empty() {
+            return;
+        }
         let sprites = &self.gui.atlas.sprites;
         // Each with its frame's type: a pack tells a glow frame and what it holds apart by its
         // `entityId` (`glow_item_frame` in entity.properties), the item drawn within its frame.
