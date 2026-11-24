@@ -66,6 +66,8 @@ impl Game<'_> {
             .filter(|id| store.slot_source_tag(id).is_ok())
             .cloned()
             .collect();
+        // Ids and tags already walked: shared by every source, so the check stays linear.
+        let mut checked = std::collections::BTreeSet::new();
         for (id, value) in &store.slot_sources {
             let (tag, _) = horizon_core::nbt::parse_snbt(&value.to_string())
                 .map_err(|error| format!("{id}: {error}"))?;
@@ -80,9 +82,11 @@ impl Game<'_> {
             }
             horizon_client::command::codec::decode("minecraft:slot_source", &tag, &registries)
                 .map_err(|error| format!("{id}: {error}"))?;
-            super::super::commands::items::slot_sources::expand(
+            super::super::commands::items::slot_sources::check_references(
                 store,
                 &serde_json::Value::String(id.clone()),
+                &mut std::collections::BTreeSet::new(),
+                &mut checked,
             )?;
         }
         Ok(registries)
